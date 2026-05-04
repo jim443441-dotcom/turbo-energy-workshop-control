@@ -1,0 +1,4 @@
+fleet_no,service_type,scheduled_hours,due_date,status,technician,notes
+FEL001,250hr Service,1250,2026-05-10,Due,Tawanda,Change oils and filters
+EXC021,500hr Service,3750,2026-05-20,Planned,Prosper,Inspection required
+HT371,10000km Service,90000,2026-05-12,Due,Blessing,Truck service

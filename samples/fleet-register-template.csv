@@ -1,0 +1,4 @@
+fleet_no,machine_type,make_model,reg_no,department,location,hours,mileage,status,service_interval_hours,last_service_hours,notes
+FEL001,Wheel Loader,Shantui SL60,,Plant,Workshop,1250,0,Available,250,1000,
+EXC021,Excavator,Shantui 215,,Mining,Pit 1,3520,0,Down,250,3250,Hydraulic leak
+HT371,Tipper Truck,Howo 371,ABC123,Transport,Coal Road,88000,88000,Online,10000,80000,
