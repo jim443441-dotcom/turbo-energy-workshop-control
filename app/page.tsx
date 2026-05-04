@@ -79,6 +79,32 @@ const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 const n = (value: any) => Number(value || 0)
 const one = (value: any) => Math.round(n(value) * 10) / 10
 
+function dateOnly(value: any) {
+  if (!value) return ''
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return String(value).slice(0, 10)
+  return d.toISOString().slice(0, 10)
+}
+
+function isBetweenDates(start: any, end: any, date = today()) {
+  if (!start && !end) return false
+  const t = new Date(date).getTime()
+  const s = start ? new Date(start).getTime() : t
+  const e = end ? new Date(end).getTime() : t
+  if (Number.isNaN(s) || Number.isNaN(e)) return false
+  return t >= s && t <= e
+}
+
+function uniqueByFleet(rows: Row[]) {
+  const seen = new Set<string>()
+  return rows.filter((row) => {
+    const fleet = String(row.fleet_no || row.machine_fleet_no || '').trim()
+    if (!fleet || seen.has(fleet)) return false
+    seen.add(fleet)
+    return true
+  })
+}
+
 function lowerKey(value: string) {
   return String(value || '')
     .toLowerCase()
@@ -182,14 +208,42 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle?: string })
   )
 }
 
-function StatCard({ label, value, note }: { label: string; value: any; note?: string }) {
-  return (
-    <div className="stat-card">
-      <span>{label}</span>
+function StatCard({
+  label,
+  value,
+  note,
+  icon,
+  tone = 'default',
+  onClick
+}: {
+  label: string
+  value: any
+  note?: string
+  icon?: string
+  tone?: 'default' | 'orange' | 'blue' | 'green' | 'red' | 'grey'
+  onClick?: () => void
+}) {
+  const content = (
+    <>
+      <div className="stat-card-top">
+        <span>{label}</span>
+        {icon && <b className="stat-icon">{icon}</b>}
+      </div>
       <strong>{value}</strong>
       {note && <small>{note}</small>}
-    </div>
+      {onClick && <em>Click to open list</em>}
+    </>
   )
+
+  if (onClick) {
+    return (
+      <button type="button" className={`stat-card clickable ${tone}`} onClick={onClick}>
+        {content}
+      </button>
+    )
+  }
+
+  return <div className={`stat-card ${tone}`}>{content}</div>
 }
 
 function Badge({ value }: { value: string }) {
@@ -411,6 +465,29 @@ export default function Home() {
     return new Date() >= due
   })
 
+  const currentHour = new Date().getHours()
+  const currentShift = currentHour >= 6 && currentHour < 18 ? 'Day Shift' : 'Night Shift'
+  const currentShiftTime = currentHour >= 6 && currentHour < 18 ? '06:00 - 18:00' : '18:00 - 06:00'
+  const activePersonnel = data.personnel.filter((p) => String(p.employment_status || 'Active').toLowerCase().includes('active'))
+  const peopleOff = data.personnel.filter((p) => {
+    const status = String(p.employment_status || '').toLowerCase()
+    return status.includes('leave') || status.includes('off') || status.includes('sick') || isBetweenDates(p.leave_start, p.leave_end)
+  })
+  const foremenOnDuty = activePersonnel.filter((p) => {
+    const words = `${p.role || ''} ${p.section || ''}`.toLowerCase()
+    const isSupervisor = words.includes('foreman') || words.includes('chargehand') || words.includes('supervisor')
+    const isOff = peopleOff.some((off) => off.id === p.id)
+    return isSupervisor && !isOff
+  })
+  const servicesToday = data.services.filter((s) => dateOnly(s.due_date) === today() && !String(s.status || '').toLowerCase().includes('complete'))
+  const machinesOnBreakdown = uniqueByFleet(openBreakdowns)
+  const machinesBeingWorkedOn = uniqueByFleet([
+    ...repairsOpen,
+    ...openBreakdowns.filter((b) => String(b.status || '').toLowerCase().includes('progress') || String(b.assigned_to || '').trim())
+  ])
+  const openSpareOrders = data.spares_orders.filter((o) => !['complete', 'closed', 'received', 'cancelled'].some((x) => String(o.status || '').toLowerCase().includes(x)))
+  const sparesDueThisWeek = [...sparesLow, ...openSpareOrders]
+
   const reportRows = useMemo(() => {
     const fleet = reportFleet.trim().toLowerCase()
     const match = (row: Row) => !fleet || String(row.fleet_no || '').toLowerCase().includes(fleet)
@@ -477,30 +554,96 @@ export default function Home() {
       {message && <div className="message">{message}</div>}
 
       {tab === 'dashboard' && (
-        <section className="panel">
-          <SectionTitle title="Workshop Dashboard" subtitle="Main live view of fleet and workshop pressure points." />
-          <div className="stats-grid">
-            <StatCard label="Total Fleet" value={data.fleet_machines.length} note="Machines in register" />
-            <StatCard label="Available / Online" value={data.fleet_machines.filter((m) => ['available', 'online'].some((x) => String(m.status || '').toLowerCase().includes(x))).length} note="Current active units" />
-            <StatCard label="Open Breakdowns" value={openBreakdowns.length} note="Not completed" />
-            <StatCard label="Open Repairs" value={repairsOpen.length} note="Workshop jobs" />
-            <StatCard label="Services Due" value={servicesDue.length} note="By uploaded schedule" />
-            <StatCard label="Spares Low" value={sparesLow.length} note="Below minimum stock" />
-            <StatCard label="Tyres Due" value={tyresDue.length} note="Based on expected life" />
-            <StatCard label="Batteries Due" value={batteriesDue.length} note="Based on fitment date" />
+        <section className="panel dashboard-panel">
+          <div className="dashboard-hero">
+            <div>
+              <p className="eyebrow">Live workshop control room</p>
+              <h2>Workshop Dashboard</h2>
+              <p>Shift, foremen, breakdowns, service work and spares pressure in one view.</p>
+            </div>
+            <div className="shift-card">
+              <span>Current shift working</span>
+              <strong>{currentShift}</strong>
+              <small>{currentShiftTime}</small>
+            </div>
           </div>
-          <div className="two-col">
-            <div className="card">
-              <h3>Machines currently down / under repair</h3>
+
+          <div className="stats-grid dashboard-stats">
+            <StatCard label="Total Fleet" value={data.fleet_machines.length} note="Machines in register" icon="🚜" tone="blue" onClick={() => setTab('fleet')} />
+            <StatCard label="Available / Online" value={data.fleet_machines.filter((m) => ['available', 'online'].some((x) => String(m.status || '').toLowerCase().includes(x))).length} note="Current active units" icon="✅" tone="green" onClick={() => setTab('fleet')} />
+            <StatCard label="People Off" value={peopleOff.length} note="Leave / sick / off duty" icon="👷" tone="grey" onClick={() => setTab('personnel')} />
+            <StatCard label="Foremen On Duty" value={foremenOnDuty.length} note="Foremen / chargehands active" icon="🧑‍🏭" tone="orange" onClick={() => setTab('personnel')} />
+            <StatCard label="Machines On Breakdown" value={machinesOnBreakdown.length} note="Open breakdown records" icon="⚠️" tone="red" onClick={() => setTab('breakdowns')} />
+            <StatCard label="Machines Being Worked On" value={machinesBeingWorkedOn.length} note="Repairs or assigned jobs" icon="🔧" tone="orange" onClick={() => setTab('repairs')} />
+            <StatCard label="Service Today" value={servicesToday.length} note="Machines due today" icon="🗓️" tone="blue" onClick={() => setTab('services')} />
+            <StatCard label="Spares Due This Week" value={sparesDueThisWeek.length} note="Low stock / open orders" icon="📦" tone="grey" onClick={() => setTab('spares')} />
+          </div>
+
+          <div className="dashboard-layout">
+            <div className="dashboard-card wide">
+              <div className="card-head">
+                <div>
+                  <h3>Machines on breakdown / under repair</h3>
+                  <p>Click the button to open the full breakdown or repair list.</p>
+                </div>
+                <button className="mini-action" onClick={() => setTab('breakdowns')}>Open breakdowns</button>
+              </div>
               <MiniTable rows={[...openBreakdowns, ...repairsOpen].slice(0, 10)} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'status', label: 'Status' }]} />
             </div>
-            <div className="card">
-              <h3>Stock, tyre and battery reminders</h3>
+
+            <div className="dashboard-card">
+              <div className="card-head">
+                <div>
+                  <h3>Machines on service today</h3>
+                  <p>From uploaded service schedule.</p>
+                </div>
+                <button className="mini-action" onClick={() => setTab('services')}>Open services</button>
+              </div>
+              <MiniTable rows={servicesToday.slice(0, 8)} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'technician', label: 'Technician' }, { key: 'status', label: 'Status' }]} empty="No machines scheduled for service today." />
+            </div>
+
+            <div className="dashboard-card">
+              <div className="card-head">
+                <div>
+                  <h3>Foremen on duty</h3>
+                  <p>Active foremen, chargehands and supervisors.</p>
+                </div>
+                <button className="mini-action" onClick={() => setTab('personnel')}>Open personnel</button>
+              </div>
+              <div className="people-list">
+                {foremenOnDuty.slice(0, 8).map((p) => (
+                  <button key={p.id} onClick={() => setTab('personnel')}>
+                    <b>{p.name}</b>
+                    <span>{p.role || 'Foreman'} · {p.section || 'Workshop'}</span>
+                  </button>
+                ))}
+                {!foremenOnDuty.length && <div className="empty blue-empty">No foremen loaded as on duty yet.</div>}
+              </div>
+            </div>
+
+            <div className="dashboard-card">
+              <div className="card-head">
+                <div>
+                  <h3>People off duty</h3>
+                  <p>Leave / sick / off records.</p>
+                </div>
+                <button className="mini-action" onClick={() => setTab('personnel')}>Open leave</button>
+              </div>
+              <MiniTable rows={peopleOff.slice(0, 8)} columns={[{ key: 'name', label: 'Name' }, { key: 'section', label: 'Section' }, { key: 'leave_reason', label: 'Reason' }, { key: 'employment_status', label: 'Status' }]} empty="No people off duty recorded." />
+            </div>
+
+            <div className="dashboard-card">
+              <div className="card-head">
+                <div>
+                  <h3>Spares due this week</h3>
+                  <p>Low stock and open spares orders.</p>
+                </div>
+                <button className="mini-action" onClick={() => setTab('spares')}>Open spares</button>
+              </div>
               <div className="reminder-list">
-                {sparesLow.slice(0, 6).map((s) => <p key={s.id}><b>{s.part_no}</b> {s.description} stock {s.stock_qty} / min {s.min_qty}</p>)}
-                {tyresDue.slice(0, 6).map((t) => <p key={t.id}><b>Tyre {t.serial_no}</b> due on {t.fleet_no}</p>)}
-                {batteriesDue.slice(0, 6).map((b) => <p key={b.id}><b>Battery {b.serial_no}</b> due on {b.fleet_no}</p>)}
-                {!sparesLow.length && !tyresDue.length && !batteriesDue.length && <p>No stock, tyre or battery reminders.</p>}
+                {sparesLow.slice(0, 5).map((s) => <p key={s.id}><b>{s.part_no}</b> {s.description} stock {s.stock_qty} / min {s.min_qty}</p>)}
+                {openSpareOrders.slice(0, 5).map((o) => <p key={o.id}><b>{o.part_no}</b> {o.description} · Qty {o.qty} · {o.status}</p>)}
+                {!sparesLow.length && !openSpareOrders.length && <p>No spares due this week.</p>}
               </div>
             </div>
           </div>
