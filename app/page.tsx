@@ -15,6 +15,7 @@ type TableName =
   | 'services'
   | 'spares'
   | 'spares_orders'
+  | 'parts_books'
   | 'personnel'
   | 'work_logs'
   | 'tyres'
@@ -30,6 +31,7 @@ const TABLES: TableName[] = [
   'services',
   'spares',
   'spares_orders',
+  'parts_books',
   'personnel',
   'work_logs',
   'tyres',
@@ -44,6 +46,7 @@ const emptyData: AppData = {
   services: [],
   spares: [],
   spares_orders: [],
+  parts_books: [],
   personnel: [],
   work_logs: [],
   tyres: [],
@@ -134,8 +137,8 @@ function cleanRow(row: Row) {
 
 function statusClass(status: string) {
   const s = String(status || '').toLowerCase()
-  if (s.includes('available') || s.includes('online') || s.includes('complete') || s.includes('in stock')) return 'good'
-  if (s.includes('due') || s.includes('order') || s.includes('pending') || s.includes('progress')) return 'warn'
+  if (s.includes('available') || s.includes('online') || s.includes('complete') || s.includes('delivered') || s.includes('received') || s.includes('funded') || s.includes('in stock')) return 'good'
+  if (s.includes('due') || s.includes('order') || s.includes('pending') || s.includes('progress') || s.includes('awaiting')) return 'warn'
   if (s.includes('down') || s.includes('offline') || s.includes('critical') || s.includes('repair')) return 'bad'
   return 'neutral'
 }
@@ -289,7 +292,27 @@ export default function Home() {
   const [repairForm, setRepairForm] = useState<Row>({ fleet_no: '', job_card_no: '', fault: '', assigned_to: '', start_time: '', end_time: '', status: 'In progress', parts_used: '', notes: '' })
   const [serviceForm, setServiceForm] = useState<Row>({ fleet_no: '', service_type: '250hr service', scheduled_hours: 0, due_date: '', status: 'Due', technician: '', notes: '' })
   const [spareForm, setSpareForm] = useState<Row>({ part_no: '', description: '', section: '', machine_type: '', stock_qty: 0, min_qty: 1, supplier: '', lead_time_days: 0, order_status: 'In stock', notes: '' })
-  const [orderForm, setOrderForm] = useState<Row>({ part_no: '', description: '', qty: 1, requested_by: '', priority: 'Normal', status: 'Requested', machine_fleet_no: '', notes: '' })
+  const [orderForm, setOrderForm] = useState<Row>({
+    request_date: today(),
+    machine_fleet_no: '',
+    machine_group: 'Yellow Machine',
+    workshop_section: 'Mechanical',
+    part_no: '',
+    description: '',
+    qty: 1,
+    spares_items: '',
+    requested_by: '',
+    priority: 'Normal',
+    status: 'Requested',
+    workflow_stage: 'Requested',
+    order_type: 'Not selected',
+    funding_status: 'Not funded',
+    eta: '',
+    notes: ''
+  })
+  const [partsBookForm, setPartsBookForm] = useState<Row>({ book_title: '', machine_group: 'Yellow Machine', machine_type: '', uploaded_by: '', file_name: '', extracted_part_numbers: '', extracted_text: '', notes: '' })
+  const [sparesSearch, setSparesSearch] = useState('')
+  const [sparesStage, setSparesStage] = useState('All')
   const [personForm, setPersonForm] = useState<Row>({ name: '', section: '', role: '', phone: '', employment_status: 'Active', leave_start: '', leave_end: '', leave_reason: '' })
   const [workForm, setWorkForm] = useState<Row>({ person_name: '', fleet_no: '', section: '', work_date: today(), hours_worked: 0, work_type: 'Repair', notes: '' })
   const [tyreForm, setTyreForm] = useState<Row>({ serial_no: '', fleet_no: '', position: '', brand: '', size: '', fitment_date: today(), fitment_hours: 0, expected_life_hours: 5000, status: 'Fitted', notes: '' })
@@ -304,7 +327,7 @@ export default function Home() {
     setOnline(typeof navigator === 'undefined' ? true : navigator.onLine)
     setQueueCount(getOfflineQueue().length)
     const snapshot = readSnapshot<AppData>()
-    if (snapshot) setData(snapshot)
+    if (snapshot) setData({ ...emptyData, ...snapshot })
     loadAll()
 
     const up = () => {
@@ -444,6 +467,76 @@ export default function Home() {
     reader.readAsDataURL(file)
   }
 
+  function extractPartNumbers(text: string) {
+    const matches = String(text || '').match(/(?:[A-Z]{1,5}[-/ ]?)?\d{2,6}[-/][A-Z0-9]{1,8}(?:[-/][A-Z0-9]{1,8})?|\b[A-Z]{1,5}\d{3,8}[A-Z]{0,3}\b|\b[A-Z0-9]{3,8}-[A-Z0-9]{2,8}\b|\b\d{5,10}\b/g) || []
+    return Array.from(new Set(matches.map((m) => m.replace(/\s+/g, '').toUpperCase()).filter((m) => m.length >= 5))).slice(0, 160)
+  }
+
+  function attachPartsBook(file?: File) {
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = () => {
+      const buffer = reader.result as ArrayBuffer
+      const bytes = new Uint8Array(buffer)
+      let rawText = ''
+      try {
+        rawText = new TextDecoder('latin1').decode(bytes)
+      } catch {
+        rawText = Array.from(bytes.slice(0, 65000)).map((b) => String.fromCharCode(b)).join('')
+      }
+      const detected = extractPartNumbers(`${file.name} ${partsBookForm.notes || ''} ${rawText}`)
+      setPartsBookForm((prev) => ({
+        ...prev,
+        book_title: prev.book_title || file.name.replace(/\.pdf$/i, ''),
+        file_name: file.name,
+        file_size: file.size,
+        mime_type: file.type || 'application/pdf',
+        extracted_text: rawText.slice(0, 60000),
+        extracted_part_numbers: detected.join('\n'),
+        extracted_count: detected.length
+      }))
+      setMessage(`Parts book loaded. Found ${detected.length} possible part numbers. You can click a part number to add it to an order.`)
+    }
+    reader.readAsArrayBuffer(file)
+  }
+
+  function addPartToOrder(partNo: string, description = '') {
+    const cleanPart = String(partNo || '').trim().toUpperCase()
+    if (!cleanPart) return
+    setOrderForm((prev) => {
+      const line = `${cleanPart}${description ? ` - ${description}` : ''} - Qty 1`
+      const existing = String(prev.spares_items || '').trim()
+      return {
+        ...prev,
+        part_no: prev.part_no || cleanPart,
+        description: prev.description || description,
+        spares_items: existing ? `${existing}\n${line}` : line
+      }
+    })
+    setMessage(`${cleanPart} added to the spares request sheet.`)
+  }
+
+  function orderStage(order: Row) {
+    return String(order.workflow_stage || order.status || 'Requested')
+  }
+
+  function moveSpareOrder(order: Row, stage: string, extra: Row = {}) {
+    const next: Row = {
+      ...order,
+      ...extra,
+      workflow_stage: stage,
+      status: stage,
+      funding_status: stage === 'Funded' ? 'Funded' : order.funding_status || 'Not funded'
+    }
+    saveRow('spares_orders', next, 'upsert')
+  }
+
+  function askEtaAndMove(order: Row) {
+    const eta = window.prompt('Enter delivery ETA date, example 2026-05-20', dateOnly(order.eta) || today())
+    if (eta === null) return
+    moveSpareOrder(order, 'Awaiting Delivery', { eta })
+  }
+
   const filteredFleet = useMemo(() => {
     const q = search.toLowerCase()
     return data.fleet_machines.filter((m) => [m.fleet_no, m.machine_type, m.department, m.location, m.status].join(' ').toLowerCase().includes(q))
@@ -487,6 +580,23 @@ export default function Home() {
   ])
   const openSpareOrders = data.spares_orders.filter((o) => !['complete', 'closed', 'received', 'cancelled'].some((x) => String(o.status || '').toLowerCase().includes(x)))
   const sparesDueThisWeek = [...sparesLow, ...openSpareOrders]
+  const sparesQuery = sparesSearch.toLowerCase().trim()
+  const filteredSpareOrders = data.spares_orders.filter((o) => {
+    const text = [o.machine_fleet_no, o.part_no, o.description, o.spares_items, o.requested_by, o.machine_group, o.workshop_section, o.order_type, o.status, o.workflow_stage, o.eta].join(' ').toLowerCase()
+    const matchesSearch = !sparesQuery || text.includes(sparesQuery)
+    const matchesStage = sparesStage === 'All' || orderStage(o) === sparesStage || String(o.order_type || '') === sparesStage || String(o.machine_group || '') === sparesStage
+    return matchesSearch && matchesStage
+  })
+  const requestedOrders = filteredSpareOrders.filter((o) => orderStage(o) === 'Requested')
+  const awaitingFundingOrders = filteredSpareOrders.filter((o) => orderStage(o) === 'Awaiting Funding')
+  const fundedOrders = filteredSpareOrders.filter((o) => orderStage(o) === 'Funded')
+  const awaitingDeliveryOrders = filteredSpareOrders.filter((o) => orderStage(o) === 'Awaiting Delivery')
+  const localOrders = filteredSpareOrders.filter((o) => String(o.order_type || '').toLowerCase().includes('local'))
+  const internationalOrders = filteredSpareOrders.filter((o) => String(o.order_type || '').toLowerCase().includes('international'))
+  const truckOrders = filteredSpareOrders.filter((o) => String(o.machine_group || '').toLowerCase().includes('truck'))
+  const yellowMachineOrders = filteredSpareOrders.filter((o) => String(o.machine_group || '').toLowerCase().includes('yellow'))
+  const extractedBookParts = Array.from(new Set((data.parts_books || []).flatMap((b) => String(b.extracted_part_numbers || '').split(/[\n,; ]+/).map((x) => x.trim()).filter(Boolean)))).slice(0, 120)
+  const currentBookParts = String(partsBookForm.extracted_part_numbers || '').split(/[\n,; ]+/).map((x) => x.trim()).filter(Boolean).slice(0, 120)
 
   const reportRows = useMemo(() => {
     const fleet = reportFleet.trim().toLowerCase()
@@ -500,6 +610,47 @@ export default function Home() {
       work: data.work_logs.filter(match)
     }
   }, [data, reportFleet])
+
+  function renderOrderCards(rows: Row[], empty = 'No spares in this section yet.') {
+    if (!rows.length) return <div className="empty">{empty}</div>
+    return (
+      <div className="order-card-list">
+        {rows.map((order) => (
+          <div className="spares-order-card" key={order.id}>
+            <div className="order-card-head">
+              <div>
+                <b>{order.machine_fleet_no || 'No fleet'}</b>
+                <span>{dateOnly(order.request_date || order.created_at) || today()} · {order.requested_by || 'Requester not set'}</span>
+              </div>
+              <Badge value={orderStage(order)} />
+            </div>
+            <div className="order-meta-grid">
+              <span><b>Group:</b> {order.machine_group || 'Not set'}</span>
+              <span><b>Section:</b> {order.workshop_section || 'Not set'}</span>
+              <span><b>Priority:</b> {order.priority || 'Normal'}</span>
+              <span><b>Order:</b> {order.order_type || 'Not selected'}</span>
+              <span><b>Funding:</b> {order.funding_status || 'Not funded'}</span>
+              <span><b>ETA:</b> {dateOnly(order.eta) || 'No ETA'}</span>
+            </div>
+            <div className="order-lines">
+              <b>{order.part_no || 'Parts request'}</b>
+              {order.description && <p>{order.description}</p>}
+              {order.spares_items && <pre>{order.spares_items}</pre>}
+              {order.notes && <small>{order.notes}</small>}
+            </div>
+            <div className="order-actions">
+              <button onClick={() => moveSpareOrder(order, 'Awaiting Funding')}>Move to awaiting funding</button>
+              <button onClick={() => moveSpareOrder(order, 'Funded', { funded_date: today(), funding_status: 'Funded' })}>Mark funded</button>
+              <button onClick={() => askEtaAndMove(order)}>Awaiting delivery + ETA</button>
+              <button onClick={() => moveSpareOrder(order, orderStage(order), { order_type: 'Local Order', supplier_type: 'Local' })}>Local order</button>
+              <button onClick={() => moveSpareOrder(order, orderStage(order), { order_type: 'International Order', supplier_type: 'International' })}>International order</button>
+              <button onClick={() => moveSpareOrder(order, 'Delivered', { delivered_date: today() })}>Delivered</button>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  }
 
   if (!session) {
     return (
@@ -733,39 +884,176 @@ export default function Home() {
       )}
 
       {tab === 'spares' && (
-        <section className="panel">
-          <SectionTitle title="Spares Stock and Ordering" subtitle="See stock availability, minimum levels, order requests and lead time." />
+        <section className="panel spares-panel">
+          <SectionTitle title="Spares Ordering Control" subtitle="Request spares by fleet number, move them through funding, local or international orders, delivery ETA and parts book lookup." />
+
+          <div className="spares-control-bar">
+            <input className="search" placeholder="Search fleet, part number, requester, status..." value={sparesSearch} onChange={(e) => setSparesSearch(e.target.value)} />
+            <select value={sparesStage} onChange={(e) => setSparesStage(e.target.value)}>
+              <option>All</option>
+              <option>Requested</option>
+              <option>Awaiting Funding</option>
+              <option>Funded</option>
+              <option>Awaiting Delivery</option>
+              <option>Local Order</option>
+              <option>International Order</option>
+              <option>Truck</option>
+              <option>Yellow Machine</option>
+            </select>
+            <button className="ghost" onClick={() => { setSparesSearch(''); setSparesStage('All') }}>Clear filter</button>
+          </div>
+
+          <div className="stats-grid">
+            <StatCard label="Requests" value={requestedOrders.length} note="New spares sheets" icon="🧾" tone="blue" />
+            <StatCard label="Awaiting Funding" value={awaitingFundingOrders.length} note="Waiting approval/money" icon="💰" tone="orange" />
+            <StatCard label="Awaiting Delivery" value={awaitingDeliveryOrders.length} note="ETA required" icon="🚚" tone="red" />
+            <StatCard label="Funded" value={fundedOrders.length} note="Ready to order/ordered" icon="✅" tone="green" />
+            <StatCard label="Local Orders" value={localOrders.length} note="Zimbabwe/local suppliers" icon="🏪" tone="grey" />
+            <StatCard label="International" value={internationalOrders.length} note="Outside country" icon="🌍" tone="blue" />
+            <StatCard label="Truck Spares" value={truckOrders.length} note="Truck requests" icon="🚛" tone="orange" />
+            <StatCard label="Yellow Machines" value={yellowMachineOrders.length} note="Loader/dozer/excavator" icon="🚜" tone="green" />
+          </div>
+
+          <div className="two-col spares-entry-grid">
+            <div className="card spares-request-sheet">
+              <h3>Spares request sheet</h3>
+              <p className="muted">Fleet number, date, requested by and full spares list. Use one line per item.</p>
+              <div className="form-grid compact">
+                <input placeholder="Fleet Number" value={orderForm.machine_fleet_no} onChange={(e) => setOrderForm({ ...orderForm, machine_fleet_no: e.target.value })} />
+                <input type="date" value={orderForm.request_date} onChange={(e) => setOrderForm({ ...orderForm, request_date: e.target.value })} />
+                <input placeholder="Requested by" value={orderForm.requested_by} onChange={(e) => setOrderForm({ ...orderForm, requested_by: e.target.value })} />
+                <select value={orderForm.machine_group} onChange={(e) => setOrderForm({ ...orderForm, machine_group: e.target.value })}>
+                  <option>Yellow Machine</option>
+                  <option>Truck</option>
+                  <option>Light Vehicle</option>
+                  <option>Plant</option>
+                  <option>Other</option>
+                </select>
+                <select value={orderForm.workshop_section} onChange={(e) => setOrderForm({ ...orderForm, workshop_section: e.target.value })}>
+                  <option>Mechanical</option>
+                  <option>Auto Electrical</option>
+                  <option>Hydraulics</option>
+                  <option>Tyres</option>
+                  <option>Service Bay</option>
+                  <option>Stores</option>
+                  <option>Workshop Admin</option>
+                </select>
+                <select value={orderForm.priority} onChange={(e) => setOrderForm({ ...orderForm, priority: e.target.value })}><option>Normal</option><option>Urgent</option><option>Critical</option></select>
+                <input placeholder="Main Part No" value={orderForm.part_no} onChange={(e) => setOrderForm({ ...orderForm, part_no: e.target.value })} />
+                <input placeholder="Main Description" value={orderForm.description} onChange={(e) => setOrderForm({ ...orderForm, description: e.target.value })} />
+                <input type="number" placeholder="Qty" value={orderForm.qty} onChange={(e) => setOrderForm({ ...orderForm, qty: e.target.value })} />
+                <select value={orderForm.order_type} onChange={(e) => setOrderForm({ ...orderForm, order_type: e.target.value })}><option>Not selected</option><option>Local Order</option><option>International Order</option></select>
+              </div>
+              <textarea className="big-textarea" placeholder={'Spares required - one item per line\nExample: 612600110540 - Oil filter - Qty 2\nExample: 154-15-12715 - Transmission seal kit - Qty 1'} value={orderForm.spares_items} onChange={(e) => setOrderForm({ ...orderForm, spares_items: e.target.value })}></textarea>
+              <div className="form-grid compact">
+                <select value={orderForm.workflow_stage} onChange={(e) => setOrderForm({ ...orderForm, workflow_stage: e.target.value, status: e.target.value })}>
+                  <option>Requested</option>
+                  <option>Awaiting Funding</option>
+                  <option>Funded</option>
+                  <option>Awaiting Delivery</option>
+                  <option>Delivered</option>
+                </select>
+                <input type="date" placeholder="ETA" value={orderForm.eta} onChange={(e) => setOrderForm({ ...orderForm, eta: e.target.value })} />
+                <input placeholder="Notes / supplier / quote ref" value={orderForm.notes} onChange={(e) => setOrderForm({ ...orderForm, notes: e.target.value })} />
+                <button className="primary" onClick={() => saveRow('spares_orders', { ...orderForm, status: orderForm.workflow_stage || 'Requested', funding_status: orderForm.workflow_stage === 'Funded' ? 'Funded' : orderForm.funding_status || 'Not funded' })}>Save Spares Request</button>
+              </div>
+            </div>
+
+            <div className="card parts-book-card">
+              <h3>PDF parts books</h3>
+              <p className="muted">Upload a PDF parts book. The app scans for likely part numbers and lets you click them into the order sheet.</p>
+              <div className="form-grid compact">
+                <input placeholder="Book title" value={partsBookForm.book_title} onChange={(e) => setPartsBookForm({ ...partsBookForm, book_title: e.target.value })} />
+                <select value={partsBookForm.machine_group} onChange={(e) => setPartsBookForm({ ...partsBookForm, machine_group: e.target.value })}>
+                  <option>Yellow Machine</option><option>Truck</option><option>Light Vehicle</option><option>Plant</option><option>Other</option>
+                </select>
+                <input placeholder="Machine type / model" value={partsBookForm.machine_type} onChange={(e) => setPartsBookForm({ ...partsBookForm, machine_type: e.target.value })} />
+                <input placeholder="Uploaded by" value={partsBookForm.uploaded_by} onChange={(e) => setPartsBookForm({ ...partsBookForm, uploaded_by: e.target.value })} />
+                <input placeholder="Notes / page / section" value={partsBookForm.notes} onChange={(e) => setPartsBookForm({ ...partsBookForm, notes: e.target.value })} />
+                <input type="file" accept="application/pdf,.pdf" onChange={(e) => attachPartsBook(e.target.files?.[0])} />
+              </div>
+              {partsBookForm.file_name && <p className="file-note"><b>Loaded:</b> {partsBookForm.file_name} · possible parts: {partsBookForm.extracted_count || currentBookParts.length}</p>}
+              <div className="part-chip-box">
+                {currentBookParts.map((part) => <button key={part} onClick={() => addPartToOrder(part)}>{part}</button>)}
+                {!currentBookParts.length && <span>No PDF part numbers extracted yet. Upload a parts book or type notes first.</span>}
+              </div>
+              <button className="primary" onClick={() => saveRow('parts_books', partsBookForm)}>Save Parts Book Index</button>
+            </div>
+          </div>
+
           <div className="two-col">
             <div className="card">
-              <h3>Stock item</h3>
+              <h3>Stock item / stock availability</h3>
               <div className="form-grid compact">
                 <input placeholder="Part No" value={spareForm.part_no} onChange={(e) => setSpareForm({ ...spareForm, part_no: e.target.value })} />
                 <input placeholder="Description" value={spareForm.description} onChange={(e) => setSpareForm({ ...spareForm, description: e.target.value })} />
                 <input placeholder="Section" value={spareForm.section} onChange={(e) => setSpareForm({ ...spareForm, section: e.target.value })} />
-                <input placeholder="Machine type" value={spareForm.machine_type} onChange={(e) => setSpareForm({ ...spareForm, machine_type: e.target.value })} />
+                <select value={spareForm.machine_type} onChange={(e) => setSpareForm({ ...spareForm, machine_type: e.target.value })}><option>Yellow Machine</option><option>Truck</option><option>Light Vehicle</option><option>Plant</option><option>Other</option></select>
                 <input type="number" placeholder="Stock Qty" value={spareForm.stock_qty} onChange={(e) => setSpareForm({ ...spareForm, stock_qty: e.target.value })} />
                 <input type="number" placeholder="Minimum Qty" value={spareForm.min_qty} onChange={(e) => setSpareForm({ ...spareForm, min_qty: e.target.value })} />
                 <input placeholder="Supplier" value={spareForm.supplier} onChange={(e) => setSpareForm({ ...spareForm, supplier: e.target.value })} />
                 <button className="primary" onClick={() => saveRow('spares', spareForm)}>Save Stock</button>
               </div>
             </div>
-            <div className="card">
-              <h3>Order request</h3>
-              <div className="form-grid compact">
-                <input placeholder="Part No" value={orderForm.part_no} onChange={(e) => setOrderForm({ ...orderForm, part_no: e.target.value })} />
-                <input placeholder="Description" value={orderForm.description} onChange={(e) => setOrderForm({ ...orderForm, description: e.target.value })} />
-                <input type="number" placeholder="Qty" value={orderForm.qty} onChange={(e) => setOrderForm({ ...orderForm, qty: e.target.value })} />
-                <input placeholder="Machine Fleet No" value={orderForm.machine_fleet_no} onChange={(e) => setOrderForm({ ...orderForm, machine_fleet_no: e.target.value })} />
-                <input placeholder="Requested by" value={orderForm.requested_by} onChange={(e) => setOrderForm({ ...orderForm, requested_by: e.target.value })} />
-                <select value={orderForm.priority} onChange={(e) => setOrderForm({ ...orderForm, priority: e.target.value })}><option>Normal</option><option>Urgent</option><option>Critical</option></select>
-                <button className="primary" onClick={() => saveRow('spares_orders', orderForm)}>Request Order</button>
+            <div className="card parts-lookup-card">
+              <h3>Saved parts book lookup</h3>
+              <p className="muted">Click a part number to add it to the request sheet.</p>
+              <div className="part-chip-box saved-parts">
+                {extractedBookParts.map((part) => <button key={part} onClick={() => addPartToOrder(part)}>{part}</button>)}
+                {!extractedBookParts.length && <span>No saved parts book indexes yet.</span>}
               </div>
             </div>
           </div>
+
+          <div className="spares-board">
+            <div className="workflow-column">
+              <h3>New requests</h3>
+              {renderOrderCards(requestedOrders, 'No new spares requests.')}
+            </div>
+            <div className="workflow-column">
+              <h3>Awaiting funding</h3>
+              {renderOrderCards(awaitingFundingOrders, 'No spares awaiting funding.')}
+            </div>
+            <div className="workflow-column">
+              <h3>Funded</h3>
+              {renderOrderCards(fundedOrders, 'No funded spares yet.')}
+            </div>
+            <div className="workflow-column">
+              <h3>Awaiting delivery / ETA</h3>
+              {renderOrderCards(awaitingDeliveryOrders, 'No deliveries waiting.')}
+            </div>
+          </div>
+
+          <div className="two-col">
+            <div className="card">
+              <h3>Local orders</h3>
+              {renderOrderCards(localOrders, 'No local orders marked yet.')}
+            </div>
+            <div className="card">
+              <h3>International orders</h3>
+              {renderOrderCards(internationalOrders, 'No international orders marked yet.')}
+            </div>
+          </div>
+
+          <div className="two-col">
+            <div className="card">
+              <h3>Truck spares area</h3>
+              <MiniTable rows={truckOrders} columns={[{ key: 'request_date', label: 'Date' }, { key: 'machine_fleet_no', label: 'Fleet' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'requested_by', label: 'Requested By' }, { key: 'status', label: 'Status' }]} empty="No truck spares requests yet." />
+            </div>
+            <div className="card">
+              <h3>Yellow machine spares area</h3>
+              <MiniTable rows={yellowMachineOrders} columns={[{ key: 'request_date', label: 'Date' }, { key: 'machine_fleet_no', label: 'Fleet' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'requested_by', label: 'Requested By' }, { key: 'status', label: 'Status' }]} empty="No yellow machine spares requests yet." />
+            </div>
+          </div>
+
           <h3>Stock availability</h3>
-          <MiniTable rows={data.spares} columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'section', label: 'Section' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }, { key: 'order_status', label: 'Status' }]} />
-          <h3>Order requests</h3>
-          <MiniTable rows={data.spares_orders} columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'qty', label: 'Qty' }, { key: 'requested_by', label: 'Requested By' }, { key: 'priority', label: 'Priority' }, { key: 'status', label: 'Status' }]} />
+          <MiniTable rows={data.spares} columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'section', label: 'Section' }, { key: 'machine_type', label: 'Area' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }, { key: 'order_status', label: 'Status' }]} />
+
+          <h3>All spares order records</h3>
+          <MiniTable rows={filteredSpareOrders} columns={[{ key: 'request_date', label: 'Date' }, { key: 'machine_fleet_no', label: 'Fleet' }, { key: 'machine_group', label: 'Area' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'qty', label: 'Qty' }, { key: 'requested_by', label: 'Requested By' }, { key: 'order_type', label: 'Order Type' }, { key: 'eta', label: 'ETA' }, { key: 'status', label: 'Status' }]} />
+
+          <h3>Saved PDF parts books</h3>
+          <MiniTable rows={data.parts_books} columns={[{ key: 'book_title', label: 'Book' }, { key: 'machine_group', label: 'Area' }, { key: 'machine_type', label: 'Machine Type' }, { key: 'file_name', label: 'File' }, { key: 'extracted_count', label: 'Parts Found' }, { key: 'uploaded_by', label: 'Uploaded By' }]} empty="No parts books saved yet." />
         </section>
       )}
 

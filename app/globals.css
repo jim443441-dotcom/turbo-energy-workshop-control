@@ -225,3 +225,206 @@ tr:nth-child(even) td { background: #f9fbfd; }
   .table-wrap { border: 1px solid #999; }
   th { background: #111 !important; color: #fff !important; }
 }
+
+/* Spares ordering upgrade */
+.spares-panel {
+  background:
+    radial-gradient(circle at 2% 0%, rgba(245,130,32,.12), transparent 26%),
+    radial-gradient(circle at 98% 0%, rgba(95,190,232,.16), transparent 30%),
+    rgba(255,255,255,.96);
+}
+.spares-control-bar {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+  background: #f7fbff;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+}
+.spares-control-bar select {
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 12px;
+  padding: 12px 14px;
+  min-width: 220px;
+}
+.spares-entry-grid .card {
+  min-height: 100%;
+}
+.muted {
+  color: var(--dark-grey);
+  margin-top: -4px;
+  font-size: 14px;
+}
+.big-textarea {
+  width: 100%;
+  min-height: 150px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 13px 14px;
+  outline: none;
+  resize: vertical;
+  margin: 4px 0 12px;
+  font: inherit;
+  background: #fff;
+}
+.big-textarea:focus {
+  border-color: var(--orange);
+  box-shadow: 0 0 0 3px rgba(245,130,32,.14);
+}
+.parts-book-card input[type="file"] {
+  grid-column: 1 / -1;
+  border: 1px dashed rgba(7,26,51,.28);
+  background: #f7fbff;
+  border-radius: 14px;
+  padding: 14px;
+}
+.file-note {
+  background: #fff4df;
+  border-left: 4px solid var(--orange);
+  border-radius: 12px;
+  padding: 10px 12px;
+  color: var(--navy);
+}
+.part-chip-box {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 230px;
+  overflow: auto;
+  background: #f7fbff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 12px;
+  margin: 12px 0;
+}
+.part-chip-box button {
+  border: 1px solid rgba(7,26,51,.16);
+  background: #fff;
+  color: var(--navy);
+  border-radius: 999px;
+  padding: 8px 10px;
+  font-weight: 900;
+  font-size: 13px;
+}
+.part-chip-box button:hover {
+  background: var(--orange);
+  color: #fff;
+  border-color: var(--orange);
+}
+.part-chip-box span {
+  color: var(--dark-grey);
+  font-size: 14px;
+}
+.saved-parts {
+  max-height: 300px;
+}
+.spares-board {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+  margin: 18px 0;
+}
+.workflow-column {
+  background: linear-gradient(180deg, #fff, #f7fbff);
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+  min-width: 0;
+}
+.workflow-column h3 {
+  margin: 0 0 12px;
+  color: var(--navy);
+}
+.order-card-list {
+  display: grid;
+  gap: 12px;
+}
+.spares-order-card {
+  border: 1px solid rgba(7,26,51,.12);
+  border-left: 5px solid var(--orange);
+  border-radius: 16px;
+  background: #fff;
+  padding: 12px;
+  box-shadow: 0 10px 18px rgba(7,26,51,.06);
+}
+.order-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+.order-card-head b {
+  display: block;
+  font-size: 18px;
+  color: var(--navy);
+}
+.order-card-head span {
+  display: block;
+  color: var(--dark-grey);
+  font-size: 12px;
+  margin-top: 2px;
+}
+.order-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  font-size: 12px;
+  color: #314158;
+  background: #f7fbff;
+  border-radius: 12px;
+  padding: 10px;
+  margin-bottom: 10px;
+}
+.order-lines b {
+  color: var(--navy);
+}
+.order-lines p {
+  margin: 4px 0;
+  color: #314158;
+}
+.order-lines pre {
+  white-space: pre-wrap;
+  background: #f7fbff;
+  border-radius: 12px;
+  padding: 10px;
+  margin: 8px 0;
+  color: #203046;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 13px;
+}
+.order-lines small {
+  display: block;
+  color: var(--dark-grey);
+  margin-top: 6px;
+}
+.order-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 12px;
+}
+.order-actions button {
+  border: 1px solid rgba(7,26,51,.12);
+  background: #fff;
+  color: var(--navy);
+  border-radius: 10px;
+  padding: 8px 9px;
+  font-weight: 800;
+  font-size: 12px;
+}
+.order-actions button:hover {
+  background: var(--navy);
+  color: #fff;
+}
+@media (max-width: 1400px) {
+  .spares-board { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 800px) {
+  .spares-board { grid-template-columns: 1fr; }
+  .order-meta-grid { grid-template-columns: 1fr; }
+}
