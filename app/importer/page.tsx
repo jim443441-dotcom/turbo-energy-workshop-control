@@ -5,16 +5,17 @@ import * as XLSX from 'xlsx'
 import { isSupabaseConfigured, supabase } from '@/lib/supabase'
 
 type Row = Record<string, any>
+type FieldType = 'text' | 'number' | 'date'
 
 type TableName =
   | 'fleet_machines'
-  | 'breakdowns'
-  | 'repairs'
-  | 'services'
-  | 'spares'
-  | 'spares_orders'
   | 'personnel'
   | 'leave_records'
+  | 'services'
+  | 'breakdowns'
+  | 'repairs'
+  | 'spares'
+  | 'spares_orders'
   | 'tyres'
   | 'tyre_measurements'
   | 'tyre_orders'
@@ -31,8 +32,6 @@ type TableName =
   | 'fabrication_projects'
   | 'photo_logs'
 
-type FieldType = 'text' | 'number' | 'date'
-
 type FieldDef = {
   key: string
   aliases: string[]
@@ -40,359 +39,470 @@ type FieldDef = {
   fallback?: any
 }
 
-type ImportItem = {
+type ImportConfig = {
   table: TableName
   label: string
   description: string
-  mode: 'insert' | 'upsert'
-  conflictKey: string
   qualityKeys: string[]
-}
-
-const IMPORTS: ImportItem[] = [
-  { table: 'fleet_machines', label: 'Fleet Register', description: 'Machines, departments, hours, mileage and status.', mode: 'upsert', conflictKey: 'fleet_no', qualityKeys: ['fleet_no'] },
-  { table: 'personnel', label: 'Personnel Register', description: 'Employees, shifts, trades, sections and leave balances.', mode: 'upsert', conflictKey: 'id', qualityKeys: ['name', 'employee_no'] },
-  { table: 'leave_records', label: 'Leave / Off Schedule', description: 'Current, upcoming and past leave records.', mode: 'insert', conflictKey: 'id', qualityKeys: ['person_name', 'employee_no'] },
-  { table: 'services', label: 'Service Schedule', description: 'Due services, service history, supervisors and job cards.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'service_type'] },
-  { table: 'breakdowns', label: 'Breakdowns', description: 'Breakdown reports, faults, spares ETA and assigned fitters.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'fault'] },
-  { table: 'repairs', label: 'Repairs / Job Cards', description: 'Repair jobs, job cards, parts used and who worked on the machine.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'fault', 'job_card_no'] },
-  { table: 'spares', label: 'Spares Stock', description: 'Part numbers, stock quantity, minimum stock, suppliers and shelves.', mode: 'insert', conflictKey: 'id', qualityKeys: ['part_no', 'description'] },
-  { table: 'spares_orders', label: 'Spares Orders', description: 'Requests, awaiting funding, funded, local/international orders and ETA.', mode: 'insert', conflictKey: 'id', qualityKeys: ['machine_fleet_no', 'part_no', 'description', 'spares_items'] },
-  { table: 'tyres', label: 'Tyres Register', description: 'Tyre make, serial, company number, fleet fitment and reminder dates.', mode: 'insert', conflictKey: 'id', qualityKeys: ['serial_no', 'company_no', 'fleet_no'] },
-  { table: 'tyre_measurements', label: 'Tyre Measurements', description: 'Tread depth, pressure, condition and repair checks.', mode: 'insert', conflictKey: 'id', qualityKeys: ['tyre_serial_no', 'fleet_no'] },
-  { table: 'tyre_orders', label: 'Tyre Orders', description: 'Tyres to quote/order against fleet numbers.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'tyre_type', 'size'] },
-  { table: 'batteries', label: 'Battery Register', description: 'Battery make, serial, fleet, voltage, fitment and maintenance reminders.', mode: 'insert', conflictKey: 'id', qualityKeys: ['serial_no', 'fleet_no'] },
-  { table: 'battery_orders', label: 'Battery Orders', description: 'Battery order requests against machines.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'battery_type', 'voltage'] },
-  { table: 'operations', label: 'Operations / Operators', description: 'Operator history, machine type, score, offences and damages.', mode: 'insert', conflictKey: 'id', qualityKeys: ['operator_name', 'fleet_no'] },
-  { table: 'hoses', label: 'Hose Stock', description: 'Hose and fitting stock levels.', mode: 'insert', conflictKey: 'id', qualityKeys: ['hose_no', 'hose_type', 'size'] },
-  { table: 'hose_requests', label: 'Hose Requests', description: 'Bulk hose requests and individual hose repairs.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'hose_type', 'requested_by'] },
-  { table: 'tools', label: 'Tools Inventory', description: 'Workshop tools, quantities, brands and condition.', mode: 'insert', conflictKey: 'id', qualityKeys: ['tool_name', 'serial_no'] },
-  { table: 'tool_orders', label: 'Tool Orders', description: 'Requests to order tools.', mode: 'insert', conflictKey: 'id', qualityKeys: ['tool_name', 'requested_by'] },
-  { table: 'employee_tools', label: 'Employee Issued Tools', description: 'Tools issued to employees and return records.', mode: 'insert', conflictKey: 'id', qualityKeys: ['employee_name', 'tool_name'] },
-  { table: 'fabrication_stock', label: 'Boiler/Panel Stock', description: 'Material stock for boiler shop and panel beaters.', mode: 'insert', conflictKey: 'id', qualityKeys: ['description', 'material_type'] },
-  { table: 'fabrication_requests', label: 'Boiler/Panel Requests', description: 'Material requests booked to machines and projects.', mode: 'insert', conflictKey: 'id', qualityKeys: ['description', 'fleet_no', 'project_name'] },
-  { table: 'fabrication_projects', label: 'Boiler/Panel Projects', description: 'Major ongoing boiler shop and panel beating projects.', mode: 'insert', conflictKey: 'id', qualityKeys: ['project_name', 'fleet_no'] },
-  { table: 'photo_logs', label: 'Photo Captions Register', description: 'Excel captions only. Actual photos still upload in the Photos page.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'caption'] }
-]
-
-const SCHEMAS: Record<TableName, FieldDef[]> = {
-  fleet_machines: [
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'fleet number', 'machine', 'machine no', 'unit', 'unit no', 'equipment', 'equipment no', 'plant no'] },
-    { key: 'machine_type', aliases: ['machine type', 'type', 'equipment type', 'fleet type'] },
-    { key: 'make_model', aliases: ['make model', 'model', 'make', 'description'] },
-    { key: 'reg_no', aliases: ['reg', 'registration', 'reg no', 'registration no'] },
-    { key: 'department', aliases: ['department', 'dept', 'section', 'area'], fallback: 'Workshop' },
-    { key: 'location', aliases: ['location', 'site'] },
-    { key: 'hours', aliases: ['hours', 'hrs', 'hm', 'hour meter'], type: 'number', fallback: 0 },
-    { key: 'mileage', aliases: ['mileage', 'km', 'odometer'], type: 'number', fallback: 0 },
-    { key: 'status', aliases: ['status', 'state'], fallback: 'Available' },
-    { key: 'service_interval_hours', aliases: ['service interval', 'service interval hours'], type: 'number', fallback: 250 },
-    { key: 'last_service_hours', aliases: ['last service', 'last service hours'], type: 'number', fallback: 0 },
-    { key: 'next_service_hours', aliases: ['next service', 'next service hours'], type: 'number', fallback: 0 },
-    { key: 'notes', aliases: ['notes', 'remarks', 'comment'] }
-  ],
-  breakdowns: [
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'fleet number', 'machine', 'unit'] },
-    { key: 'category', aliases: ['category', 'area', 'section', 'department'], fallback: 'Mechanical' },
-    { key: 'fault', aliases: ['fault', 'breakdown', 'defect', 'problem', 'description', 'complaint'] },
-    { key: 'reported_by', aliases: ['reported by', 'requester', 'raised by', 'operator'] },
-    { key: 'assigned_to', aliases: ['assigned to', 'worked by', 'fitter', 'mechanic', 'technician'] },
-    { key: 'start_time', aliases: ['start time', 'start date', 'date reported', 'date'] },
-    { key: 'status', aliases: ['status', 'state'], fallback: 'Open' },
-    { key: 'spare_eta', aliases: ['spares eta', 'spare eta', 'eta'], type: 'date' },
-    { key: 'expected_available_date', aliases: ['expected available', 'available date', 'return date'], type: 'date' },
-    { key: 'cause', aliases: ['cause', 'root cause'] },
-    { key: 'action_taken', aliases: ['action taken', 'repair done', 'work done'] },
-    { key: 'preventative_recommendation', aliases: ['preventative', 'recommendation', 'preventative maintenance'] },
-    { key: 'notes', aliases: ['notes', 'remarks'] }
-  ],
-  repairs: [
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine', 'unit'] },
-    { key: 'job_card_no', aliases: ['job card', 'job card no', 'jc no', 'job no'] },
-    { key: 'fault', aliases: ['fault', 'problem', 'defect', 'description'] },
-    { key: 'assigned_to', aliases: ['assigned to', 'worked by', 'fitter', 'mechanic', 'technician'] },
-    { key: 'start_time', aliases: ['start time', 'start date', 'date'] },
-    { key: 'end_time', aliases: ['end time', 'end date', 'completed date'] },
-    { key: 'status', aliases: ['status'], fallback: 'In progress' },
-    { key: 'parts_used', aliases: ['parts used', 'spares used', 'parts'] },
-    { key: 'notes', aliases: ['notes', 'remarks'] }
-  ],
-  services: [
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine', 'unit'] },
-    { key: 'service_type', aliases: ['service type', 'service', 'type'], fallback: '250hr service' },
-    { key: 'due_date', aliases: ['due date', 'service due date', 'date'], type: 'date' },
-    { key: 'scheduled_hours', aliases: ['scheduled hours', 'due hours', 'hours', 'hm'], type: 'number', fallback: 0 },
-    { key: 'completed_date', aliases: ['completed date', 'date completed', 'done date'], type: 'date' },
-    { key: 'completed_hours', aliases: ['completed hours', 'done hours'], type: 'number', fallback: 0 },
-    { key: 'job_card_no', aliases: ['job card', 'job card no'] },
-    { key: 'supervisor', aliases: ['supervisor', 'foreman'] },
-    { key: 'technician', aliases: ['technician', 'fitter', 'mechanic'] },
-    { key: 'status', aliases: ['status'], fallback: 'Due' },
-    { key: 'notes', aliases: ['notes', 'remarks'] }
-  ],
-  spares: [
-    { key: 'part_no', aliases: ['part no', 'part number', 'spare no', 'stock code', 'item no'] },
-    { key: 'description', aliases: ['description', 'item', 'spare', 'part name'] },
-    { key: 'section', aliases: ['section', 'department'], fallback: 'Stores' },
-    { key: 'machine_group', aliases: ['machine group', 'group'], fallback: 'Yellow Machine' },
-    { key: 'machine_type', aliases: ['machine type', 'type'] },
-    { key: 'stock_qty', aliases: ['stock qty', 'qty', 'quantity', 'stock', 'balance'], type: 'number', fallback: 0 },
-    { key: 'min_qty', aliases: ['min qty', 'minimum', 'minimum stock', 'reorder level'], type: 'number', fallback: 1 },
-    { key: 'supplier', aliases: ['supplier', 'vendor'] },
-    { key: 'shelf_location', aliases: ['shelf', 'bin', 'location'] },
-    { key: 'lead_time_days', aliases: ['lead time', 'lead time days'], type: 'number', fallback: 0 },
-    { key: 'order_status', aliases: ['order status', 'status'], fallback: 'In stock' }
-  ],
-  spares_orders: [
-    { key: 'request_date', aliases: ['request date', 'date'], type: 'date' },
-    { key: 'machine_fleet_no', aliases: ['fleet', 'fleet no', 'machine', 'unit'] },
-    { key: 'machine_group', aliases: ['machine group', 'group'], fallback: 'Yellow Machine' },
-    { key: 'workshop_section', aliases: ['workshop section', 'section', 'department'], fallback: 'Mechanical' },
-    { key: 'requested_by', aliases: ['requested by', 'requester', 'foreman', 'raised by'] },
-    { key: 'part_no', aliases: ['part no', 'part number', 'spare no', 'stock code'] },
-    { key: 'description', aliases: ['description', 'item', 'spare'] },
-    { key: 'qty', aliases: ['qty', 'quantity', 'number'], type: 'number', fallback: 1 },
-    { key: 'spares_items', aliases: ['spares items', 'items', 'list'] },
-    { key: 'priority', aliases: ['priority'], fallback: 'Normal' },
-    { key: 'workflow_stage', aliases: ['workflow stage', 'stage', 'status'], fallback: 'Requested' },
-    { key: 'status', aliases: ['status', 'stage'], fallback: 'Requested' },
-    { key: 'order_type', aliases: ['order type', 'local international', 'local/international'], fallback: 'Not selected' },
-    { key: 'funding_status', aliases: ['funding status', 'funding'], fallback: 'Not funded' },
-    { key: 'eta', aliases: ['eta', 'delivery date', 'expected date'], type: 'date' },
-    { key: 'notes', aliases: ['notes', 'remarks'] }
-  ],
-  personnel: [
-    { key: 'employee_no', aliases: ['employee no', 'emp no', 'clock no', 'staff no', 'code', 'employee code'] },
-    { key: 'name', aliases: ['name', 'employee name', 'employee', 'worker', 'person', 'full name'] },
-    { key: 'shift', aliases: ['shift'], fallback: 'Shift 1' },
-    { key: 'section', aliases: ['section', 'department', 'dept'], fallback: 'Workshop' },
-    { key: 'role', aliases: ['role', 'trade', 'position', 'job title', 'occupation', 'current job title'], fallback: 'Diesel Plant Fitter' },
-    { key: 'staff_group', aliases: ['staff group', 'group'], fallback: 'Workshop Staff' },
-    { key: 'phone', aliases: ['phone', 'cell', 'mobile'] },
-    { key: 'employment_status', aliases: ['employment status', 'status'], fallback: 'Active' },
-    { key: 'leave_balance_days', aliases: ['leave balance', 'leave days', 'days leave'], type: 'number', fallback: 30 },
-    { key: 'leave_taken_days', aliases: ['leave taken', 'days taken'], type: 'number', fallback: 0 },
-    { key: 'notes', aliases: ['notes', 'remarks'] }
-  ],
-  leave_records: [
-    { key: 'employee_no', aliases: ['employee no', 'emp no', 'clock no', 'code', 'employee code'] },
-    { key: 'person_name', aliases: ['person name', 'employee name', 'name', 'employee', 'full name'] },
-    { key: 'shift', aliases: ['shift'], fallback: 'Shift 1' },
-    { key: 'section', aliases: ['section', 'department'] },
-    { key: 'role', aliases: ['role', 'trade', 'position', 'occupation', 'current job title'] },
-    { key: 'leave_type', aliases: ['leave type', 'type'], fallback: 'Annual Leave' },
-    { key: 'start_date', aliases: ['start date', 'leave start', 'from'], type: 'date' },
-    { key: 'end_date', aliases: ['end date', 'leave end', 'to'], type: 'date' },
-    { key: 'days', aliases: ['days', 'total days', 'total'], type: 'number' },
-    { key: 'reason', aliases: ['reason'] },
-    { key: 'status', aliases: ['status'], fallback: 'Approved' }
-  ],
-  tyres: [
-    { key: 'make', aliases: ['make', 'brand'] },
-    { key: 'serial_no', aliases: ['serial', 'serial no', 'serial number', 'sn'] },
-    { key: 'company_no', aliases: ['company no', 'company number'] },
-    { key: 'production_date', aliases: ['production date', 'date of production'], type: 'date' },
-    { key: 'fitted_date', aliases: ['fitted date', 'date fitted', 'fitment date'], type: 'date' },
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine', 'unit'] },
-    { key: 'fitted_by', aliases: ['fitted by'] },
-    { key: 'position', aliases: ['position', 'wheel position'], fallback: 'FL' },
-    { key: 'tyre_type', aliases: ['tyre type', 'type'] },
-    { key: 'size', aliases: ['size'] },
-    { key: 'fitment_hours', aliases: ['fitment hours', 'hours', 'hm'], type: 'number', fallback: 0 },
-    { key: 'fitment_mileage', aliases: ['fitment mileage', 'mileage', 'km'], type: 'number', fallback: 0 },
-    { key: 'current_tread_mm', aliases: ['current tread', 'tread', 'tread depth'], type: 'number', fallback: 0 },
-    { key: 'measurement_due_date', aliases: ['measurement due', 'reminder'], type: 'date' },
-    { key: 'stock_status', aliases: ['stock status'], fallback: 'Fitted' },
-    { key: 'status', aliases: ['status'], fallback: 'Fitted' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  tyre_measurements: [
-    { key: 'tyre_serial_no', aliases: ['tyre serial', 'serial no', 'serial'] },
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine'] },
-    { key: 'position', aliases: ['position'] },
-    { key: 'measurement_date', aliases: ['measurement date', 'date'], type: 'date' },
-    { key: 'measured_by', aliases: ['measured by', 'checked by'] },
-    { key: 'tread_depth_mm', aliases: ['tread depth', 'tread'], type: 'number', fallback: 0 },
-    { key: 'pressure_psi', aliases: ['pressure', 'psi'], type: 'number', fallback: 0 },
-    { key: 'condition', aliases: ['condition'], fallback: 'Good' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  tyre_orders: [
-    { key: 'request_date', aliases: ['request date', 'date'], type: 'date' },
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine'] },
-    { key: 'tyre_type', aliases: ['tyre type', 'type'] },
-    { key: 'size', aliases: ['size'] },
-    { key: 'qty', aliases: ['qty', 'quantity'], type: 'number', fallback: 1 },
-    { key: 'requested_by', aliases: ['requested by', 'requester', 'foreman'] },
-    { key: 'reason', aliases: ['reason'] },
-    { key: 'priority', aliases: ['priority'], fallback: 'Normal' },
-    { key: 'status', aliases: ['status'], fallback: 'Requested' },
-    { key: 'eta', aliases: ['eta'], type: 'date' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  batteries: [
-    { key: 'make', aliases: ['make', 'brand'] },
-    { key: 'serial_no', aliases: ['serial', 'serial no', 'serial number'] },
-    { key: 'production_date', aliases: ['production date', 'date of production'], type: 'date' },
-    { key: 'fitment_date', aliases: ['fitment date', 'date fitted', 'fitted date'], type: 'date' },
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine'] },
-    { key: 'fitted_by', aliases: ['fitted by'] },
-    { key: 'charging_voltage', aliases: ['charging voltage', 'charging system voltage'], fallback: '24V' },
-    { key: 'volts', aliases: ['volts', 'voltage'], fallback: '12V' },
-    { key: 'fitment_hours', aliases: ['fitment hours', 'hours', 'hm'], type: 'number', fallback: 0 },
-    { key: 'fitment_mileage', aliases: ['fitment mileage', 'mileage', 'km'], type: 'number', fallback: 0 },
-    { key: 'maintenance_due_date', aliases: ['maintenance due', 'reminder'], type: 'date' },
-    { key: 'stock_status', aliases: ['stock status'], fallback: 'Fitted' },
-    { key: 'status', aliases: ['status'], fallback: 'Fitted' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  battery_orders: [
-    { key: 'request_date', aliases: ['request date', 'date'], type: 'date' },
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine'] },
-    { key: 'battery_type', aliases: ['battery type', 'type'] },
-    { key: 'voltage', aliases: ['voltage', 'volts'], fallback: '12V' },
-    { key: 'qty', aliases: ['qty', 'quantity'], type: 'number', fallback: 1 },
-    { key: 'requested_by', aliases: ['requested by', 'requester', 'foreman'] },
-    { key: 'reason', aliases: ['reason'] },
-    { key: 'priority', aliases: ['priority'], fallback: 'Normal' },
-    { key: 'status', aliases: ['status'], fallback: 'Requested' },
-    { key: 'eta', aliases: ['eta'], type: 'date' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  operations: [
-    { key: 'operator_name', aliases: ['operator name', 'operator', 'name'] },
-    { key: 'employee_no', aliases: ['employee no', 'clock no'] },
-    { key: 'machine_group', aliases: ['machine group', 'group'], fallback: 'Truck' },
-    { key: 'machine_type', aliases: ['machine type', 'type'], fallback: 'Truck' },
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine'] },
-    { key: 'shift', aliases: ['shift'], fallback: 'Shift 1' },
-    { key: 'score', aliases: ['score'], type: 'number', fallback: 100 },
-    { key: 'offence', aliases: ['offence', 'offense'] },
-    { key: 'damage_report', aliases: ['damage report', 'damage', 'abuse'] },
-    { key: 'supervisor', aliases: ['supervisor', 'foreman'] },
-    { key: 'event_date', aliases: ['event date', 'date'], type: 'date' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  hoses: [
-    { key: 'hose_no', aliases: ['hose no', 'hose number'] },
-    { key: 'hose_type', aliases: ['hose type', 'type'], fallback: 'Hydraulic Hose' },
-    { key: 'size', aliases: ['size'] },
-    { key: 'length', aliases: ['length'] },
-    { key: 'fitting_a', aliases: ['fitting a', 'fitting 1'], fallback: 'Straight' },
-    { key: 'fitting_b', aliases: ['fitting b', 'fitting 2'], fallback: 'Straight' },
-    { key: 'stock_qty', aliases: ['stock qty', 'qty', 'quantity'], type: 'number', fallback: 0 },
-    { key: 'min_qty', aliases: ['min qty', 'minimum'], type: 'number', fallback: 1 },
-    { key: 'shelf_location', aliases: ['shelf', 'location', 'bin'] },
-    { key: 'status', aliases: ['status'], fallback: 'In stock' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  hose_requests: [
-    { key: 'request_date', aliases: ['request date', 'date'], type: 'date' },
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine'] },
-    { key: 'requested_by', aliases: ['requested by', 'requester', 'foreman'] },
-    { key: 'hose_type', aliases: ['hose type', 'type'], fallback: 'Hydraulic Hose' },
-    { key: 'hose_no', aliases: ['hose no'] },
-    { key: 'size', aliases: ['size'] },
-    { key: 'length', aliases: ['length'] },
-    { key: 'fittings', aliases: ['fittings'] },
-    { key: 'qty', aliases: ['qty', 'quantity'], type: 'number', fallback: 1 },
-    { key: 'repair_type', aliases: ['repair type'], fallback: 'New hose' },
-    { key: 'offsite_repair', aliases: ['offsite repair'], fallback: 'No' },
-    { key: 'admin_approval', aliases: ['admin approval', 'approval'], fallback: 'Pending' },
-    { key: 'status', aliases: ['status'], fallback: 'Requested' },
-    { key: 'eta', aliases: ['eta'], type: 'date' },
-    { key: 'reason', aliases: ['reason'] },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  tools: [
-    { key: 'tool_name', aliases: ['tool name', 'tool'] },
-    { key: 'category', aliases: ['category'], fallback: 'Hand Tools' },
-    { key: 'brand', aliases: ['brand', 'make'] },
-    { key: 'model', aliases: ['model'] },
-    { key: 'serial_no', aliases: ['serial no', 'serial'] },
-    { key: 'stock_qty', aliases: ['stock qty', 'qty', 'quantity'], type: 'number', fallback: 0 },
-    { key: 'workshop_section', aliases: ['workshop section', 'section'], fallback: 'Mechanical' },
-    { key: 'condition', aliases: ['condition'], fallback: 'Good' },
-    { key: 'status', aliases: ['status'], fallback: 'In stock' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  tool_orders: [
-    { key: 'request_date', aliases: ['request date', 'date'], type: 'date' },
-    { key: 'tool_name', aliases: ['tool name', 'tool'] },
-    { key: 'category', aliases: ['category'], fallback: 'Hand Tools' },
-    { key: 'brand', aliases: ['brand'] },
-    { key: 'qty', aliases: ['qty', 'quantity'], type: 'number', fallback: 1 },
-    { key: 'requested_by', aliases: ['requested by', 'requester'] },
-    { key: 'reason', aliases: ['reason'] },
-    { key: 'priority', aliases: ['priority'], fallback: 'Normal' },
-    { key: 'status', aliases: ['status'], fallback: 'Requested' },
-    { key: 'eta', aliases: ['eta'], type: 'date' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  employee_tools: [
-    { key: 'employee_name', aliases: ['employee name', 'employee', 'name'] },
-    { key: 'employee_no', aliases: ['employee no', 'clock no'] },
-    { key: 'tool_name', aliases: ['tool name', 'tool'] },
-    { key: 'brand', aliases: ['brand'] },
-    { key: 'serial_no', aliases: ['serial no', 'serial'] },
-    { key: 'issue_date', aliases: ['issue date', 'date issued'], type: 'date' },
-    { key: 'issued_by', aliases: ['issued by'] },
-    { key: 'condition_issued', aliases: ['condition issued'], fallback: 'Good' },
-    { key: 'return_date', aliases: ['return date'], type: 'date' },
-    { key: 'condition_returned', aliases: ['condition returned'] },
-    { key: 'status', aliases: ['status'], fallback: 'Issued' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  fabrication_stock: [
-    { key: 'department', aliases: ['department'], fallback: 'Boiler Shop' },
-    { key: 'material_type', aliases: ['material type', 'material'], fallback: 'Steel Plate' },
-    { key: 'description', aliases: ['description', 'item'] },
-    { key: 'size_spec', aliases: ['size spec', 'size'] },
-    { key: 'stock_qty', aliases: ['stock qty', 'qty', 'quantity'], type: 'number', fallback: 0 },
-    { key: 'min_qty', aliases: ['min qty', 'minimum'], type: 'number', fallback: 1 },
-    { key: 'unit', aliases: ['unit'], fallback: 'pcs' },
-    { key: 'supplier', aliases: ['supplier'] },
-    { key: 'location', aliases: ['location'] },
-    { key: 'status', aliases: ['status'], fallback: 'In stock' },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  fabrication_requests: [
-    { key: 'request_date', aliases: ['request date', 'date'], type: 'date' },
-    { key: 'department', aliases: ['department'], fallback: 'Boiler Shop' },
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine'] },
-    { key: 'requested_by', aliases: ['requested by', 'requester', 'foreman'] },
-    { key: 'material_type', aliases: ['material type', 'material'] },
-    { key: 'description', aliases: ['description', 'item'] },
-    { key: 'qty', aliases: ['qty', 'quantity'], type: 'number', fallback: 1 },
-    { key: 'project_name', aliases: ['project name', 'project'] },
-    { key: 'status', aliases: ['status'], fallback: 'Requested' },
-    { key: 'eta', aliases: ['eta'], type: 'date' },
-    { key: 'reason', aliases: ['reason'] },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  fabrication_projects: [
-    { key: 'department', aliases: ['department'], fallback: 'Boiler Shop' },
-    { key: 'project_name', aliases: ['project name', 'project'] },
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine'] },
-    { key: 'supervisor', aliases: ['supervisor', 'foreman'] },
-    { key: 'start_date', aliases: ['start date'], type: 'date' },
-    { key: 'target_date', aliases: ['target date'], type: 'date' },
-    { key: 'status', aliases: ['status'], fallback: 'Ongoing' },
-    { key: 'material_used', aliases: ['material used'] },
-    { key: 'progress_percent', aliases: ['progress percent', 'progress'], type: 'number', fallback: 0 },
-    { key: 'notes', aliases: ['notes'] }
-  ],
-  photo_logs: [
-    { key: 'fleet_no', aliases: ['fleet', 'fleet no', 'machine'] },
-    { key: 'linked_type', aliases: ['linked type', 'type'], fallback: 'Photo' },
-    { key: 'caption', aliases: ['caption', 'description'] },
-    { key: 'notes', aliases: ['notes'] }
-  ]
+  fields: FieldDef[]
 }
 
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 const today = () => new Date().toISOString().slice(0, 10)
-const nowIso = () => new Date().toISOString()
+
+const IMPORTS: ImportConfig[] = [
+  {
+    table: 'fleet_machines',
+    label: 'Fleet Register',
+    description: 'Machines, fleet numbers, hours, mileage, department and status.',
+    qualityKeys: ['fleet_no'],
+    fields: [
+      f('fleet_no', ['fleet', 'fleet no', 'fleet number', 'machine', 'machine no', 'unit', 'unit no', 'equipment', 'equipment no']),
+      f('machine_type', ['machine type', 'type', 'equipment type', 'fleet type']),
+      f('make_model', ['make model', 'model', 'make', 'description']),
+      f('reg_no', ['reg', 'registration', 'reg no']),
+      f('department', ['department', 'dept', 'section', 'area'], 'text', 'Workshop'),
+      f('location', ['location', 'site']),
+      f('hours', ['hours', 'hrs', 'hm', 'hour meter', 'meter reading'], 'number', 0),
+      f('mileage', ['mileage', 'km', 'odometer'], 'number', 0),
+      f('status', ['status', 'state'], 'text', 'Available'),
+      f('notes', ['notes', 'remarks'])
+    ]
+  },
+  {
+    table: 'personnel',
+    label: 'Personnel Register',
+    description: 'Employees, shifts, trades, sections, leave balances and status.',
+    qualityKeys: ['name', 'employee_no'],
+    fields: [
+      f('employee_no', ['code', 'employee code', 'employee no', 'emp no', 'clock no', 'staff no']),
+      f('name', ['name', 'employee name', 'full name', 'employee']),
+      f('shift', ['shift'], 'text', 'Shift 1'),
+      f('section', ['department', 'dept', 'section'], 'text', 'Workshop'),
+      f('role', ['occupation', 'current job title', 'job title', 'trade', 'role', 'position'], 'text', 'Workshop Employee'),
+      f('staff_group', ['staff group', 'group'], 'text', 'Workshop Staff'),
+      f('phone', ['phone', 'cell', 'mobile']),
+      f('employment_status', ['employment status', 'status'], 'text', 'Active'),
+      f('leave_balance_days', ['leave balance', 'leave days', 'days leave'], 'number', 30),
+      f('leave_taken_days', ['leave taken', 'days taken'], 'number', 0),
+      f('notes', ['notes', 'remarks'])
+    ]
+  },
+  {
+    table: 'leave_records',
+    label: 'Leave / Off Schedule',
+    description: 'Current, upcoming and past leave records.',
+    qualityKeys: ['person_name', 'employee_no'],
+    fields: [
+      f('employee_no', ['code', 'employee code', 'employee no', 'emp no', 'clock no']),
+      f('person_name', ['name', 'employee name', 'full name', 'person name', 'employee']),
+      f('shift', ['shift'], 'text', 'Shift 1'),
+      f('section', ['department', 'dept', 'section']),
+      f('role', ['occupation', 'current job title', 'job title', 'trade', 'role']),
+      f('leave_type', ['leave type', 'type'], 'text', 'Annual Leave'),
+      f('start_date', ['start date', 'leave start', 'from'], 'date'),
+      f('end_date', ['end date', 'leave end', 'to'], 'date'),
+      f('days', ['total', 'days', 'total days', 'leave days'], 'number', 0),
+      f('reason', ['reason']),
+      f('status', ['status'], 'text', 'Approved')
+    ]
+  },
+  {
+    table: 'services',
+    label: 'Service Schedule',
+    description: 'Services, service history, job cards and supervisors.',
+    qualityKeys: ['fleet_no', 'service_type'],
+    fields: [
+      f('fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
+      f('service_type', ['service type', 'service', 'type'], 'text', 'Service'),
+      f('due_date', ['due date', 'service due date', 'date'], 'date'),
+      f('scheduled_hours', ['scheduled hours', 'due hours', 'hours', 'hm'], 'number', 0),
+      f('completed_date', ['completed date', 'date completed', 'done date'], 'date'),
+      f('completed_hours', ['completed hours', 'done hours'], 'number', 0),
+      f('job_card_no', ['job card', 'job card no']),
+      f('supervisor', ['supervisor', 'foreman']),
+      f('technician', ['technician', 'fitter', 'mechanic']),
+      f('status', ['status'], 'text', 'Due'),
+      f('notes', ['notes', 'remarks'])
+    ]
+  },
+  {
+    table: 'breakdowns',
+    label: 'Breakdowns',
+    description: 'Breakdown records, faults, ETAs and assigned fitters.',
+    qualityKeys: ['fleet_no', 'fault'],
+    fields: [
+      f('fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
+      f('category', ['category', 'area', 'section', 'department'], 'text', 'Mechanical'),
+      f('fault', ['fault', 'breakdown', 'defect', 'problem', 'description']),
+      f('reported_by', ['reported by', 'requester', 'raised by', 'operator']),
+      f('assigned_to', ['assigned to', 'worked by', 'fitter', 'mechanic', 'technician']),
+      f('start_time', ['start time', 'start date', 'date reported', 'date']),
+      f('status', ['status'], 'text', 'Open'),
+      f('spare_eta', ['spares eta', 'spare eta', 'eta'], 'date'),
+      f('expected_available_date', ['expected available', 'available date', 'return date'], 'date'),
+      f('cause', ['cause', 'root cause']),
+      f('action_taken', ['action taken', 'repair done', 'work done']),
+      f('preventative_recommendation', ['preventative', 'recommendation', 'preventative maintenance']),
+      f('notes', ['notes', 'remarks'])
+    ]
+  },
+  {
+    table: 'repairs',
+    label: 'Repairs / Job Cards',
+    description: 'Repairs, job cards, parts used and fitters.',
+    qualityKeys: ['fleet_no', 'fault', 'job_card_no'],
+    fields: [
+      f('fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
+      f('job_card_no', ['job card', 'job card no', 'jc no', 'job no']),
+      f('fault', ['fault', 'problem', 'defect', 'description']),
+      f('assigned_to', ['assigned to', 'worked by', 'fitter', 'mechanic', 'technician']),
+      f('start_time', ['start time', 'start date', 'date']),
+      f('end_time', ['end time', 'end date', 'completed date']),
+      f('status', ['status'], 'text', 'In progress'),
+      f('parts_used', ['parts used', 'spares used', 'parts']),
+      f('notes', ['notes', 'remarks'])
+    ]
+  },
+  {
+    table: 'spares',
+    label: 'Spares Stock',
+    description: 'Part numbers, stock quantities, suppliers and shelves.',
+    qualityKeys: ['part_no', 'description'],
+    fields: [
+      f('part_no', ['part no', 'part number', 'spare no', 'stock code', 'item no']),
+      f('description', ['description', 'item', 'spare', 'part name']),
+      f('section', ['section', 'department'], 'text', 'Stores'),
+      f('machine_group', ['machine group', 'group'], 'text', 'Yellow Machine'),
+      f('machine_type', ['machine type', 'type']),
+      f('stock_qty', ['stock qty', 'qty', 'quantity', 'stock', 'balance'], 'number', 0),
+      f('min_qty', ['min qty', 'minimum', 'minimum stock', 'reorder level'], 'number', 1),
+      f('supplier', ['supplier', 'vendor']),
+      f('shelf_location', ['shelf', 'bin', 'location']),
+      f('lead_time_days', ['lead time', 'lead time days'], 'number', 0),
+      f('order_status', ['order status', 'status'], 'text', 'In stock')
+    ]
+  },
+  {
+    table: 'spares_orders',
+    label: 'Spares Orders',
+    description: 'Requests, awaiting funding, funded, local/international and ETA.',
+    qualityKeys: ['machine_fleet_no', 'part_no', 'description', 'spares_items'],
+    fields: [
+      f('request_date', ['request date', 'date'], 'date'),
+      f('machine_fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
+      f('machine_group', ['machine group', 'group'], 'text', 'Yellow Machine'),
+      f('workshop_section', ['workshop section', 'section', 'department'], 'text', 'Mechanical'),
+      f('requested_by', ['requested by', 'requester', 'foreman', 'raised by']),
+      f('part_no', ['part no', 'part number', 'spare no', 'stock code']),
+      f('description', ['description', 'item', 'spare']),
+      f('qty', ['qty', 'quantity', 'number'], 'number', 1),
+      f('spares_items', ['spares items', 'items', 'list']),
+      f('priority', ['priority'], 'text', 'Normal'),
+      f('workflow_stage', ['workflow stage', 'stage', 'status'], 'text', 'Requested'),
+      f('status', ['status', 'stage'], 'text', 'Requested'),
+      f('order_type', ['order type', 'local international', 'local/international'], 'text', 'Not selected'),
+      f('funding_status', ['funding status', 'funding'], 'text', 'Not funded'),
+      f('eta', ['eta', 'delivery date', 'expected date'], 'date'),
+      f('notes', ['notes', 'remarks'])
+    ]
+  },
+  {
+    table: 'tyres',
+    label: 'Tyres Register',
+    description: 'Tyre make, serial, company number, fitment and reminders.',
+    qualityKeys: ['serial_no', 'company_no', 'fleet_no'],
+    fields: [
+      f('make', ['make', 'brand']),
+      f('serial_no', ['serial', 'serial no', 'serial number', 'sn']),
+      f('company_no', ['company no', 'company number']),
+      f('production_date', ['production date', 'date of production'], 'date'),
+      f('fitted_date', ['fitted date', 'date fitted', 'fitment date'], 'date'),
+      f('fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
+      f('fitted_by', ['fitted by']),
+      f('position', ['position', 'wheel position'], 'text', 'FL'),
+      f('tyre_type', ['tyre type', 'type']),
+      f('size', ['size']),
+      f('fitment_hours', ['fitment hours', 'hours', 'hm'], 'number', 0),
+      f('fitment_mileage', ['fitment mileage', 'mileage', 'km'], 'number', 0),
+      f('current_tread_mm', ['current tread', 'tread', 'tread depth'], 'number', 0),
+      f('measurement_due_date', ['measurement due', 'reminder'], 'date'),
+      f('stock_status', ['stock status'], 'text', 'Fitted'),
+      f('status', ['status'], 'text', 'Fitted'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'tyre_measurements',
+    label: 'Tyre Measurements',
+    description: 'Tread depth, pressure, condition and checks.',
+    qualityKeys: ['tyre_serial_no', 'fleet_no'],
+    fields: [
+      f('tyre_serial_no', ['tyre serial', 'serial no', 'serial']),
+      f('fleet_no', ['fleet', 'fleet no', 'machine']),
+      f('position', ['position']),
+      f('measurement_date', ['measurement date', 'date'], 'date'),
+      f('measured_by', ['measured by', 'checked by']),
+      f('tread_depth_mm', ['tread depth', 'tread'], 'number', 0),
+      f('pressure_psi', ['pressure', 'psi'], 'number', 0),
+      f('condition', ['condition'], 'text', 'Good'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'tyre_orders',
+    label: 'Tyre Orders',
+    description: 'Tyres to quote/order against machines.',
+    qualityKeys: ['fleet_no', 'tyre_type', 'size'],
+    fields: [
+      f('request_date', ['request date', 'date'], 'date'),
+      f('fleet_no', ['fleet', 'fleet no', 'machine']),
+      f('tyre_type', ['tyre type', 'type']),
+      f('size', ['size']),
+      f('qty', ['qty', 'quantity'], 'number', 1),
+      f('requested_by', ['requested by', 'requester', 'foreman']),
+      f('reason', ['reason']),
+      f('priority', ['priority'], 'text', 'Normal'),
+      f('status', ['status'], 'text', 'Requested'),
+      f('eta', ['eta'], 'date'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'batteries',
+    label: 'Battery Register',
+    description: 'Battery make, serial, fleet, voltage and maintenance reminders.',
+    qualityKeys: ['serial_no', 'fleet_no'],
+    fields: [
+      f('make', ['make', 'brand']),
+      f('serial_no', ['serial', 'serial no', 'serial number']),
+      f('production_date', ['production date', 'date of production'], 'date'),
+      f('fitment_date', ['fitment date', 'date fitted', 'fitted date'], 'date'),
+      f('fleet_no', ['fleet', 'fleet no', 'machine']),
+      f('fitted_by', ['fitted by']),
+      f('charging_voltage', ['charging voltage', 'charging system voltage'], 'text', '24V'),
+      f('volts', ['volts', 'voltage'], 'text', '12V'),
+      f('fitment_hours', ['fitment hours', 'hours', 'hm'], 'number', 0),
+      f('fitment_mileage', ['fitment mileage', 'mileage', 'km'], 'number', 0),
+      f('maintenance_due_date', ['maintenance due', 'reminder'], 'date'),
+      f('stock_status', ['stock status'], 'text', 'Fitted'),
+      f('status', ['status'], 'text', 'Fitted'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'battery_orders',
+    label: 'Battery Orders',
+    description: 'Battery orders against machines.',
+    qualityKeys: ['fleet_no', 'battery_type', 'voltage'],
+    fields: [
+      f('request_date', ['request date', 'date'], 'date'),
+      f('fleet_no', ['fleet', 'fleet no', 'machine']),
+      f('battery_type', ['battery type', 'type']),
+      f('voltage', ['voltage', 'volts'], 'text', '12V'),
+      f('qty', ['qty', 'quantity'], 'number', 1),
+      f('requested_by', ['requested by', 'requester', 'foreman']),
+      f('reason', ['reason']),
+      f('priority', ['priority'], 'text', 'Normal'),
+      f('status', ['status'], 'text', 'Requested'),
+      f('eta', ['eta'], 'date'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'operations',
+    label: 'Operations / Operators',
+    description: 'Operator history, scores, offences and damages.',
+    qualityKeys: ['operator_name', 'fleet_no'],
+    fields: [
+      f('operator_name', ['operator name', 'operator', 'name']),
+      f('employee_no', ['employee no', 'clock no', 'code']),
+      f('machine_group', ['machine group', 'group'], 'text', 'Truck'),
+      f('machine_type', ['machine type', 'type'], 'text', 'Truck'),
+      f('fleet_no', ['fleet', 'fleet no', 'machine']),
+      f('shift', ['shift'], 'text', 'Shift 1'),
+      f('score', ['score'], 'number', 100),
+      f('offence', ['offence', 'offense']),
+      f('damage_report', ['damage report', 'damage', 'abuse']),
+      f('supervisor', ['supervisor', 'foreman']),
+      f('event_date', ['event date', 'date'], 'date'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'hoses',
+    label: 'Hose Stock',
+    description: 'Hose and fitting stock.',
+    qualityKeys: ['hose_no', 'hose_type', 'size'],
+    fields: [
+      f('hose_no', ['hose no', 'hose number']),
+      f('hose_type', ['hose type', 'type'], 'text', 'Hydraulic Hose'),
+      f('size', ['size']),
+      f('length', ['length']),
+      f('fitting_a', ['fitting a', 'fitting 1'], 'text', 'Straight'),
+      f('fitting_b', ['fitting b', 'fitting 2'], 'text', 'Straight'),
+      f('stock_qty', ['stock qty', 'qty', 'quantity'], 'number', 0),
+      f('min_qty', ['min qty', 'minimum'], 'number', 1),
+      f('shelf_location', ['shelf', 'location', 'bin']),
+      f('status', ['status'], 'text', 'In stock'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'hose_requests',
+    label: 'Hose Requests',
+    description: 'Bulk hose requests and individual hose repairs.',
+    qualityKeys: ['fleet_no', 'hose_type', 'requested_by'],
+    fields: [
+      f('request_date', ['request date', 'date'], 'date'),
+      f('fleet_no', ['fleet', 'fleet no', 'machine']),
+      f('requested_by', ['requested by', 'requester', 'foreman']),
+      f('hose_type', ['hose type', 'type'], 'text', 'Hydraulic Hose'),
+      f('hose_no', ['hose no']),
+      f('size', ['size']),
+      f('length', ['length']),
+      f('fittings', ['fittings']),
+      f('qty', ['qty', 'quantity'], 'number', 1),
+      f('repair_type', ['repair type'], 'text', 'New hose'),
+      f('offsite_repair', ['offsite repair'], 'text', 'No'),
+      f('admin_approval', ['admin approval', 'approval'], 'text', 'Pending'),
+      f('status', ['status'], 'text', 'Requested'),
+      f('eta', ['eta'], 'date'),
+      f('reason', ['reason']),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'tools',
+    label: 'Tools Inventory',
+    description: 'Workshop tools, quantity, brand and condition.',
+    qualityKeys: ['tool_name', 'serial_no'],
+    fields: [
+      f('tool_name', ['tool name', 'tool']),
+      f('category', ['category'], 'text', 'Hand Tools'),
+      f('brand', ['brand', 'make']),
+      f('model', ['model']),
+      f('serial_no', ['serial no', 'serial']),
+      f('stock_qty', ['stock qty', 'qty', 'quantity'], 'number', 0),
+      f('workshop_section', ['workshop section', 'section'], 'text', 'Mechanical'),
+      f('condition', ['condition'], 'text', 'Good'),
+      f('status', ['status'], 'text', 'In stock'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'tool_orders',
+    label: 'Tool Orders',
+    description: 'Requests to order tools.',
+    qualityKeys: ['tool_name', 'requested_by'],
+    fields: [
+      f('request_date', ['request date', 'date'], 'date'),
+      f('tool_name', ['tool name', 'tool']),
+      f('category', ['category'], 'text', 'Hand Tools'),
+      f('brand', ['brand']),
+      f('qty', ['qty', 'quantity'], 'number', 1),
+      f('requested_by', ['requested by', 'requester']),
+      f('reason', ['reason']),
+      f('priority', ['priority'], 'text', 'Normal'),
+      f('status', ['status'], 'text', 'Requested'),
+      f('eta', ['eta'], 'date'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'employee_tools',
+    label: 'Employee Issued Tools',
+    description: 'Tools issued to employees and return records.',
+    qualityKeys: ['employee_name', 'tool_name'],
+    fields: [
+      f('employee_name', ['employee name', 'employee', 'name']),
+      f('employee_no', ['employee no', 'clock no', 'code']),
+      f('tool_name', ['tool name', 'tool']),
+      f('brand', ['brand']),
+      f('serial_no', ['serial no', 'serial']),
+      f('issue_date', ['issue date', 'date issued'], 'date'),
+      f('issued_by', ['issued by']),
+      f('condition_issued', ['condition issued'], 'text', 'Good'),
+      f('return_date', ['return date'], 'date'),
+      f('condition_returned', ['condition returned']),
+      f('status', ['status'], 'text', 'Issued'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'fabrication_stock',
+    label: 'Boiler/Panel Stock',
+    description: 'Material stock for boiler shop and panel beaters.',
+    qualityKeys: ['description', 'material_type'],
+    fields: [
+      f('department', ['department'], 'text', 'Boiler Shop'),
+      f('material_type', ['material type', 'material'], 'text', 'Steel Plate'),
+      f('description', ['description', 'item']),
+      f('size_spec', ['size spec', 'size']),
+      f('stock_qty', ['stock qty', 'qty', 'quantity'], 'number', 0),
+      f('min_qty', ['min qty', 'minimum'], 'number', 1),
+      f('unit', ['unit'], 'text', 'pcs'),
+      f('supplier', ['supplier']),
+      f('location', ['location']),
+      f('status', ['status'], 'text', 'In stock'),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'fabrication_requests',
+    label: 'Boiler/Panel Requests',
+    description: 'Material requests booked to machines and projects.',
+    qualityKeys: ['description', 'fleet_no', 'project_name'],
+    fields: [
+      f('request_date', ['request date', 'date'], 'date'),
+      f('department', ['department'], 'text', 'Boiler Shop'),
+      f('fleet_no', ['fleet', 'fleet no', 'machine']),
+      f('requested_by', ['requested by', 'requester', 'foreman']),
+      f('material_type', ['material type', 'material']),
+      f('description', ['description', 'item']),
+      f('qty', ['qty', 'quantity'], 'number', 1),
+      f('project_name', ['project name', 'project']),
+      f('status', ['status'], 'text', 'Requested'),
+      f('eta', ['eta'], 'date'),
+      f('reason', ['reason']),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'fabrication_projects',
+    label: 'Boiler/Panel Projects',
+    description: 'Major ongoing boiler shop and panel beating projects.',
+    qualityKeys: ['project_name', 'fleet_no'],
+    fields: [
+      f('department', ['department'], 'text', 'Boiler Shop'),
+      f('project_name', ['project name', 'project']),
+      f('fleet_no', ['fleet', 'fleet no', 'machine']),
+      f('supervisor', ['supervisor', 'foreman']),
+      f('start_date', ['start date'], 'date'),
+      f('target_date', ['target date'], 'date'),
+      f('status', ['status'], 'text', 'Ongoing'),
+      f('material_used', ['material used']),
+      f('progress_percent', ['progress percent', 'progress'], 'number', 0),
+      f('notes', ['notes'])
+    ]
+  },
+  {
+    table: 'photo_logs',
+    label: 'Photo Captions Register',
+    description: 'Excel captions only. Actual photos remain on Photos page.',
+    qualityKeys: ['fleet_no', 'caption'],
+    fields: [
+      f('fleet_no', ['fleet', 'fleet no', 'machine']),
+      f('linked_type', ['linked type', 'type'], 'text', 'Photo'),
+      f('caption', ['caption', 'description']),
+      f('notes', ['notes'])
+    ]
+  }
+]
+
+function f(key: string, aliases: string[], type: FieldType = 'text', fallback: any = ''): FieldDef {
+  return { key, aliases, type, fallback }
+}
 
 function normalizeKey(value: any) {
   return String(value || '')
@@ -413,6 +523,17 @@ function cleanRow(row: Row) {
   return out
 }
 
+function parseExcelDateNumber(value: number) {
+  const parsed = XLSX.SSF.parse_date_code(value)
+  if (!parsed) return ''
+
+  const yyyy = String(parsed.y).padStart(4, '0')
+  const mm = String(parsed.m).padStart(2, '0')
+  const dd = String(parsed.d).padStart(2, '0')
+
+  return `${yyyy}-${mm}-${dd}`
+}
+
 function dateOnly(value: any) {
   if (!value) return ''
 
@@ -420,29 +541,35 @@ function dateOnly(value: any) {
     return value.toISOString().slice(0, 10)
   }
 
-  if (typeof value === 'number' && value > 25000) {
-    const parsed = XLSX.SSF.parse_date_code(value)
-    if (parsed) {
-      const mm = String(parsed.m).padStart(2, '0')
-      const dd = String(parsed.d).padStart(2, '0')
-      return `${parsed.y}-${mm}-${dd}`
-    }
+  if (typeof value === 'number' && value > 20000) {
+    return parseExcelDateNumber(value)
   }
 
   const text = String(value).trim()
+  if (!text) return ''
 
-  const dotDate = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/)
-  if (dotDate) {
-    const dd = dotDate[1].padStart(2, '0')
-    const mm = dotDate[2].padStart(2, '0')
-    const yyyy = dotDate[3].length === 2 ? `20${dotDate[3]}` : dotDate[3]
+  let match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/)
+  if (match) {
+    const dd = match[1].padStart(2, '0')
+    const mm = match[2].padStart(2, '0')
+    const yyyy = match[3].length === 2 ? `20${match[3]}` : match[3]
     return `${yyyy}-${mm}-${dd}`
   }
 
-  const d = new Date(text)
-  if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10)
+  match = text.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/)
+  if (match) {
+    const yyyy = match[1]
+    const mm = match[2].padStart(2, '0')
+    const dd = match[3].padStart(2, '0')
+    return `${yyyy}-${mm}-${dd}`
+  }
 
-  return text.slice(0, 10)
+  const parsed = new Date(text)
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10)
+  }
+
+  return ''
 }
 
 function daysInclusive(start: any, end: any) {
@@ -488,33 +615,31 @@ function fuzzyCell(row: Row, aliases: string[]) {
 }
 
 function getCell(row: Row, aliases: string[]) {
-  const extra = aliases.flatMap((alias) => {
-    const a = normalizeKey(alias)
-    const more: string[] = []
+  const expanded = aliases.flatMap((alias) => {
+    const n = normalizeKey(alias)
+    const extra: string[] = []
 
-    if (a.includes('fleet')) more.push('fleet', 'fleet no', 'fleet number', 'machine', 'machine no', 'unit', 'unit no', 'equipment', 'asset', 'plant no')
-    if (a.includes('machine')) more.push('machine', 'machine no', 'fleet', 'fleet no', 'unit', 'equipment', 'asset')
-    if (a.includes('employee')) more.push('employee', 'employee name', 'emp no', 'clock no', 'staff no', 'worker', 'person', 'name')
-    if (a.includes('request')) more.push('requested by', 'requester', 'foreman', 'supervisor', 'raised by', 'ordered by')
-    if (a.includes('qty')) more.push('qty', 'quantity', 'number', 'amount', 'stock', 'stock qty', 'balance')
-    if (a.includes('part')) more.push('part no', 'part number', 'spare no', 'spare number', 'item no', 'stock code', 'material code')
-    if (a.includes('serial')) more.push('serial', 'serial no', 'serial number', 's/n', 'sn')
-    if (a.includes('date')) more.push('date', 'request date', 'fitted date', 'fitment date', 'production date', 'due date', 'start date', 'end date')
-    if (a.includes('status')) more.push('status', 'state', 'stage')
-    if (a.includes('role')) more.push('role', 'trade', 'position', 'job title', 'designation')
-    if (a.includes('section')) more.push('section', 'department', 'dept', 'area')
-    if (a.includes('hours')) more.push('hours', 'hrs', 'hm', 'hour meter', 'meter reading')
-    if (a.includes('mileage')) more.push('mileage', 'km', 'odometer')
+    if (n.includes('fleet')) extra.push('fleet', 'fleet no', 'fleet number', 'machine', 'machine no', 'unit', 'unit no', 'equipment', 'asset')
+    if (n.includes('employee')) extra.push('employee', 'employee name', 'emp no', 'employee no', 'clock no', 'staff no', 'code', 'name')
+    if (n.includes('request')) extra.push('requested by', 'requester', 'foreman', 'supervisor', 'raised by', 'ordered by')
+    if (n.includes('qty')) extra.push('qty', 'quantity', 'number', 'amount', 'stock', 'stock qty', 'balance')
+    if (n.includes('part')) extra.push('part no', 'part number', 'spare no', 'spare number', 'item no', 'stock code')
+    if (n.includes('serial')) extra.push('serial', 'serial no', 'serial number', 'sn', 's/n')
+    if (n.includes('status')) extra.push('status', 'state', 'stage')
+    if (n.includes('role')) extra.push('role', 'trade', 'position', 'job title', 'occupation', 'current job title')
+    if (n.includes('section')) extra.push('section', 'department', 'dept', 'area')
+    if (n.includes('hours')) extra.push('hours', 'hrs', 'hm', 'hour meter')
+    if (n.includes('date')) extra.push('date', 'dates', 'request date', 'fitted date', 'fitment date', 'production date', 'due date')
 
-    return [alias, ...more]
+    return [alias, ...extra]
   })
 
-  return exactCell(row, extra) || fuzzyCell(row, extra)
+  return exactCell(row, expanded) || fuzzyCell(row, expanded)
 }
 
-function convertValue(row: Row, field: FieldDef) {
-  const raw = getCell(row, field.aliases)
-  const value = raw === '' || raw === undefined || raw === null ? field.fallback : raw
+function convertValue(raw: Row, field: FieldDef) {
+  const found = getCell(raw, field.aliases)
+  const value = found === '' || found === undefined || found === null ? field.fallback : found
 
   if (field.type === 'number') {
     const num = Number(String(value ?? '').replace(/,/g, ''))
@@ -534,41 +659,135 @@ function makeId(table: TableName, mapped: Row) {
   return uid()
 }
 
-function mapRow(table: TableName, raw: Row) {
-  const schema = SCHEMAS[table]
-  const mapped: Row = {}
+function parseDateRange(value: any) {
+  const text = String(value || '').trim()
 
-  schema.forEach((field) => {
-    mapped[field.key] = convertValue(raw, field)
-  })
+  const matches = text.match(/\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/g) || []
 
-  if (table === 'leave_records' && !mapped.days) {
-    mapped.days = daysInclusive(mapped.start_date, mapped.end_date)
+  if (matches.length >= 2) {
+    return [dateOnly(matches[0]), dateOnly(matches[1])]
+  }
+
+  if (matches.length === 1) {
+    return [dateOnly(matches[0]), dateOnly(matches[0])]
+  }
+
+  return ['', '']
+}
+
+function fullNameFromRaw(raw: Row) {
+  const firstName = getCell(raw, ['FirstName', 'First Name', 'Forename', 'Name'])
+  const surname = getCell(raw, ['Surname', 'Last Name'])
+
+  return `${String(firstName || '').trim()} ${String(surname || '').trim()}`.trim()
+}
+
+function polishMappedRow(table: TableName, raw: Row, mapped: Row) {
+  const next = { ...mapped }
+
+  if (table === 'personnel') {
+    const fullName = fullNameFromRaw(raw)
+
+    if (!next.name && fullName) next.name = fullName
+    if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
+    if (!next.role || next.role === 'Workshop Employee') {
+      next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade']) || next.role
+    }
+    if (!next.section || next.section === 'Workshop') {
+      next.section = getCell(raw, ['Department', 'Dept', 'Section']) || next.section
+    }
+
+    next.shift = next.shift || 'Shift 1'
+    next.staff_group = next.staff_group || 'Workshop Staff'
+    next.employment_status = next.employment_status || 'Active'
+    next.id = next.employee_no || next.name || next.id || uid()
+  }
+
+  if (table === 'leave_records') {
+    const fullName = fullNameFromRaw(raw)
+    const dates = getCell(raw, ['DATES', 'Dates', 'Date Range', 'Leave Dates'])
+    const [startDate, endDate] = parseDateRange(dates)
+
+    if (!next.person_name && fullName) next.person_name = fullName
+    if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
+    if (!next.role) next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade'])
+    if (!next.section) next.section = getCell(raw, ['Department', 'Dept', 'Section'])
+    if (!next.leave_type || next.leave_type === 'Annual Leave') {
+      next.leave_type = getCell(raw, ['LEAVE TYPE', 'Leave Type', 'Type']) || 'Annual Leave'
+    }
+
+    if (!next.start_date && startDate) next.start_date = startDate
+    if (!next.end_date && endDate) next.end_date = endDate
+
+    const totalDays = Number(getCell(raw, ['TOTAL', 'Total', 'Days', 'Leave Days']))
+    if (!next.days || Number(next.days) === 0) {
+      next.days = Number.isFinite(totalDays) && totalDays > 0 ? totalDays : daysInclusive(next.start_date, next.end_date)
+    }
+
+    next.shift = next.shift || 'Shift 1'
+    next.status = next.status || 'Approved'
+    next.id = next.id || uid()
+  }
+
+  return cleanRow(next)
+}
+
+function applyDefaults(table: TableName, row: Row) {
+  const next = { ...row }
+
+  const defaultTodayTables = [
+    'spares_orders',
+    'tyre_measurements',
+    'tyre_orders',
+    'battery_orders',
+    'hose_requests',
+    'tool_orders',
+    'employee_tools',
+    'fabrication_requests',
+    'fabrication_projects',
+    'operations'
+  ]
+
+  if (defaultTodayTables.includes(table)) {
+    const key =
+      table === 'tyre_measurements' ? 'measurement_date' :
+      table === 'employee_tools' ? 'issue_date' :
+      table === 'fabrication_projects' ? 'start_date' :
+      table === 'operations' ? 'event_date' :
+      'request_date'
+
+    if (!next[key]) next[key] = today()
   }
 
   if (table === 'spares_orders') {
-    if (!mapped.request_date) mapped.request_date = today()
-    if (!mapped.workflow_stage) mapped.workflow_stage = 'Requested'
-    if (!mapped.status) mapped.status = mapped.workflow_stage
+    next.workflow_stage = next.workflow_stage || 'Requested'
+    next.status = next.status || next.workflow_stage
   }
 
-  if (table === 'tyre_measurements' && !mapped.measurement_date) mapped.measurement_date = today()
-  if (table === 'tyre_orders' && !mapped.request_date) mapped.request_date = today()
-  if (table === 'battery_orders' && !mapped.request_date) mapped.request_date = today()
-  if (table === 'hose_requests' && !mapped.request_date) mapped.request_date = today()
-  if (table === 'tool_orders' && !mapped.request_date) mapped.request_date = today()
-  if (table === 'employee_tools' && !mapped.issue_date) mapped.issue_date = today()
-  if (table === 'fabrication_requests' && !mapped.request_date) mapped.request_date = today()
-  if (table === 'fabrication_projects' && !mapped.start_date) mapped.start_date = today()
-  if (table === 'operations' && !mapped.event_date) mapped.event_date = today()
+  return cleanRow(next)
+}
 
-  mapped.id = makeId(table, mapped)
+function mapRow(config: ImportConfig, raw: Row) {
+  const mapped: Row = {}
 
-  return cleanRow(mapped)
+  config.fields.forEach((field) => {
+    mapped[field.key] = convertValue(raw, field)
+  })
+
+  mapped.id = makeId(config.table, mapped)
+
+  return applyDefaults(config.table, polishMappedRow(config.table, raw, cleanRow(mapped)))
+}
+
+function hasUsefulData(config: ImportConfig, row: Row) {
+  return config.qualityKeys.some((key) => {
+    const value = row[key]
+    return value !== undefined && value !== null && String(value).trim() !== ''
+  })
 }
 
 function scoreHeaderRow(row: any[]) {
-  const headingWords = [
+  const words = [
     'fleet', 'machine', 'unit', 'equipment',
     'firstname', 'first name', 'surname', 'employee', 'code',
     'occupation', 'current job title', 'department', 'shift',
@@ -577,14 +796,12 @@ function scoreHeaderRow(row: any[]) {
     'requested by', 'supervisor', 'foreman'
   ]
 
-  const cells = row.map((item) => String(item || '').trim()).filter(Boolean)
-
+  const cells = row.map((cell) => String(cell || '').trim()).filter(Boolean)
   let score = 0
 
-  cells.forEach((item) => {
-    const normal = normalizeKey(item)
-
-    headingWords.forEach((word) => {
+  cells.forEach((cell) => {
+    const normal = normalizeKey(cell)
+    words.forEach((word) => {
       if (normal.includes(normalizeKey(word))) score += 1
     })
   })
@@ -599,7 +816,6 @@ async function readWorkbook(file: File) {
 
   workbook.SheetNames.forEach((sheetName) => {
     const sheet = workbook.Sheets[sheetName]
-
     const raw = XLSX.utils.sheet_to_json(sheet, {
       header: 1,
       defval: '',
@@ -639,10 +855,7 @@ async function readWorkbook(file: File) {
       })
 
       if (filled > 0) {
-        allRows.push({
-          ...obj,
-          _sheet_name: sheetName
-        })
+        allRows.push({ ...obj, _sheet_name: sheetName })
       }
     })
   })
@@ -650,89 +863,22 @@ async function readWorkbook(file: File) {
   return allRows
 }
 
-function parseDateRange(value: any) {
-  const text = String(value || '').trim()
-  const matches = text.match(/\d{1,4}[./-]\d{1,2}[./-]\d{1,4}/g) || []
-
-  if (matches.length >= 2) {
-    return [dateOnly(matches[0]), dateOnly(matches[1])]
-  }
-
-  return ['', '']
-}
-
-function fullNameFromRaw(raw: Row) {
-  const firstName = getCell(raw, ['FirstName', 'First Name', 'first_name', 'Forename'])
-  const surname = getCell(raw, ['Surname', 'Last Name', 'last_name'])
-
-  return `${String(firstName || '').trim()} ${String(surname || '').trim()}`.trim()
-}
-
-function polishMappedRow(table: TableName, raw: Row, mapped: Row) {
-  const next = { ...mapped }
-
-  if (table === 'personnel') {
-    const fullName = fullNameFromRaw(raw)
-
-    if (!next.name && fullName) next.name = fullName
-    if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
-    if (!next.role || next.role === 'Diesel Plant Fitter') {
-      next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade']) || next.role
-    }
-    if (!next.section || next.section === 'Workshop') {
-      next.section = getCell(raw, ['Department', 'Dept', 'Section']) || next.section
-    }
-    if (!next.employment_status) next.employment_status = 'Active'
-    if (!next.shift) next.shift = 'Shift 1'
-    if (!next.staff_group) next.staff_group = 'Workshop Staff'
-
-    next.id = next.employee_no || next.name || next.id || uid()
-  }
-
-  if (table === 'leave_records') {
-    const fullName = fullNameFromRaw(raw)
-    const range = getCell(raw, ['DATES', 'Dates', 'Date Range', 'Leave Dates'])
-    const [startDate, endDate] = parseDateRange(range)
-
-    if (!next.person_name && fullName) next.person_name = fullName
-    if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
-    if (!next.role) next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade'])
-    if (!next.section) next.section = getCell(raw, ['Department', 'Dept', 'Section'])
-    if (!next.leave_type || next.leave_type === 'Annual Leave') {
-      next.leave_type = getCell(raw, ['LEAVE TYPE', 'Leave Type', 'Type']) || 'Annual Leave'
-    }
-    if (!next.start_date && startDate) next.start_date = startDate
-    if (!next.end_date && endDate) next.end_date = endDate
-
-    const totalDays = Number(getCell(raw, ['TOTAL', 'Total', 'Days', 'Leave Days']))
-    if (!next.days || Number(next.days) === 0) {
-      next.days = Number.isFinite(totalDays) && totalDays > 0 ? totalDays : daysInclusive(next.start_date, next.end_date)
-    }
-
-    if (!next.status) next.status = 'Approved'
-    next.id = next.id || uid()
-  }
-
-  return cleanRow(next)
-}
-
-function hasUsefulData(item: ImportItem, row: Row) {
-  return item.qualityKeys.some((key) => {
-    const value = row[key]
-    return value !== undefined && value !== null && String(value).trim() !== ''
-  })
-}
-
 function Badge({ value }: { value: string }) {
   const v = String(value || 'Ready')
   const low = v.toLowerCase()
-  const cls = low.includes('error') || low.includes('failed') ? 'danger' : low.includes('uploaded') || low.includes('success') ? 'good' : 'neutral'
+
+  const cls =
+    low.includes('failed') || low.includes('error')
+      ? 'danger'
+      : low.includes('uploaded') || low.includes('connected')
+        ? 'good'
+        : 'neutral'
 
   return <span className={`badge ${cls}`}>{v}</span>
 }
 
 export default function ImporterPage() {
-  const [selected, setSelected] = useState<TableName>('fleet_machines')
+  const [selected, setSelected] = useState<TableName>('personnel')
   const [status, setStatus] = useState('Ready')
   const [busy, setBusy] = useState(false)
   const [previewRows, setPreviewRows] = useState<Row[]>([])
@@ -740,39 +886,30 @@ export default function ImporterPage() {
   const [fileName, setFileName] = useState('')
   const [search, setSearch] = useState('')
 
-  const selectedImport = IMPORTS.find((item) => item.table === selected) || IMPORTS[0]
+  const selectedConfig = IMPORTS.find((item) => item.table === selected) || IMPORTS[0]
 
   const filteredImports = useMemo(() => {
     const q = search.toLowerCase()
     return IMPORTS.filter((item) => `${item.label} ${item.description} ${item.table}`.toLowerCase().includes(q))
   }, [search])
 
-  async function insertRows(table: TableName, rows: Row[], item: ImportItem) {
+  async function insertRows(config: ImportConfig, rows: Row[]) {
     if (!supabase || !isSupabaseConfigured) {
-      throw new Error('Supabase is not configured. Check NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY.')
+      throw new Error('Supabase is not configured.')
     }
 
     let uploaded = 0
     const chunkSize = 100
 
     for (let i = 0; i < rows.length; i += chunkSize) {
-      const chunk = rows.slice(i, i + chunkSize).map((row) => ({
-        ...row,
-        created_at: row.created_at || nowIso(),
-        updated_at: nowIso()
-      }))
+      const chunk = rows.slice(i, i + chunkSize)
 
-      const request =
-        item.mode === 'upsert'
-          ? supabase.from(table as any).upsert(chunk, { onConflict: item.conflictKey })
-          : supabase.from(table as any).insert(chunk)
-
-      const { error } = await request
+      const { error } = await supabase.from(config.table as any).upsert(chunk, { onConflict: 'id' })
 
       if (error) throw error
 
       uploaded += chunk.length
-      setStatus(`Uploaded ${uploaded}/${rows.length} records to ${item.label}...`)
+      setStatus(`Uploaded ${uploaded}/${rows.length} records to ${config.label}...`)
     }
   }
 
@@ -792,19 +929,18 @@ export default function ImporterPage() {
       setRawHeadings(headings)
 
       const mapped = rawRows
-        .map((row) => polishMappedRow(selected, row, mapRow(selected, row)))
-        .filter((row) => hasUsefulData(selectedImport, row))
+        .map((row) => mapRow(selectedConfig, row))
+        .filter((row) => hasUsefulData(selectedConfig, row))
 
       setPreviewRows(mapped.slice(0, 10))
 
       if (!mapped.length) {
-        setStatus(`No usable rows found for ${selectedImport.label}. Try another import type or check headings.`)
+        setStatus(`No usable rows found for ${selectedConfig.label}. Choose the correct register on the left.`)
         return
       }
 
-      await insertRows(selected, mapped, selectedImport)
-
-      setStatus(`Uploaded ${mapped.length} records to ${selectedImport.label}.`)
+      await insertRows(selectedConfig, mapped)
+      setStatus(`Uploaded ${mapped.length} records to ${selectedConfig.label}.`)
     } catch (err: any) {
       setStatus(`Upload failed: ${err?.message || 'Unknown error'}`)
     } finally {
@@ -820,9 +956,8 @@ export default function ImporterPage() {
           --navy2: #0b2b52;
           --orange: #ff7a1a;
           --blue: #9fe6ff;
-          --grey: #d8e1eb;
-          --card: rgba(9, 31, 58, .92);
-          --line: rgba(159, 230, 255, .22);
+          --card: rgba(9,31,58,.94);
+          --line: rgba(159,230,255,.24);
           --text: #f4f8ff;
           --muted: #a9bad1;
         }
@@ -830,7 +965,7 @@ export default function ImporterPage() {
         body {
           margin: 0;
           background:
-            radial-gradient(circle at top left, rgba(255,122,26,.20), transparent 34%),
+            radial-gradient(circle at top left, rgba(255,122,26,.22), transparent 34%),
             linear-gradient(135deg, #030912 0%, #071a33 48%, #0b2b52 100%);
           color: var(--text);
         }
@@ -869,7 +1004,6 @@ export default function ImporterPage() {
           place-items: center;
           font-weight: 900;
           font-size: 22px;
-          box-shadow: inset 0 0 0 3px rgba(255,122,26,.20);
         }
 
         h1, h2, h3 {
@@ -883,7 +1017,7 @@ export default function ImporterPage() {
 
         a {
           color: var(--blue);
-          font-weight: 800;
+          font-weight: 900;
           text-decoration: none;
         }
 
@@ -904,8 +1038,7 @@ export default function ImporterPage() {
         }
 
         .module-search,
-        .upload-box input,
-        select {
+        .upload-box input {
           width: 100%;
           box-sizing: border-box;
           padding: 13px 14px;
@@ -915,11 +1048,6 @@ export default function ImporterPage() {
           color: var(--text);
           outline: none;
           font-weight: 700;
-        }
-
-        select option {
-          background: #071a33;
-          color: white;
         }
 
         .module-list {
@@ -944,7 +1072,7 @@ export default function ImporterPage() {
         .module-btn.active {
           border-color: var(--orange);
           box-shadow: inset 4px 0 0 var(--orange);
-          background: rgba(255,122,26,.14);
+          background: rgba(255,122,26,.16);
         }
 
         .module-btn b {
@@ -998,7 +1126,7 @@ export default function ImporterPage() {
           border-radius: 16px;
           background: rgba(159,230,255,.10);
           border: 1px solid var(--line);
-          font-weight: 800;
+          font-weight: 900;
         }
 
         .badge {
@@ -1071,7 +1199,7 @@ export default function ImporterPage() {
           border: 1px solid var(--line);
           border-radius: 999px;
           padding: 8px 10px;
-          font-weight: 800;
+          font-weight: 900;
           font-size: 12px;
         }
 
@@ -1101,8 +1229,6 @@ export default function ImporterPage() {
           text-transform: uppercase;
           letter-spacing: .06em;
           background: rgba(0,0,0,.24);
-          position: sticky;
-          top: 0;
         }
 
         .empty {
@@ -1151,7 +1277,7 @@ export default function ImporterPage() {
           <div className="mark">TE</div>
           <div>
             <h1>Turbo Energy Smart Excel Importer</h1>
-            <p>Universal Excel/CSV upload center for every workshop page. Works with different heading names, merged-top sheets and multiple sheets.</p>
+            <p>Upload Excel/CSV for personnel, leave, fleet, spares, tyres, batteries, hoses, tools and workshop sections.</p>
           </div>
         </div>
 
@@ -1196,8 +1322,8 @@ export default function ImporterPage() {
         <section>
           <div className="card top-card">
             <div>
-              <h2>{selectedImport.label}</h2>
-              <p>{selectedImport.description}</p>
+              <h2>{selectedConfig.label}</h2>
+              <p>{selectedConfig.description}</p>
 
               <div className="upload-box">
                 <input
@@ -1211,8 +1337,8 @@ export default function ImporterPage() {
                 />
 
                 <p>
-                  Accepts headings like Fleet Number, Machine, Unit, Qty, Quantity, Requested By,
-                  Foreman, FirstName, Surname, Code, Occupation, Department, Dates, Total and Leave Type.
+                  Accepts different headings. For your leave file it reads Code, FirstName, Surname,
+                  Occupation, Department, DATES, TOTAL and LEAVE TYPE.
                 </p>
               </div>
 
@@ -1222,17 +1348,17 @@ export default function ImporterPage() {
             <div className="meta">
               <div>
                 <span>Selected</span>
-                <b>{selectedImport.label}</b>
+                <b>{selectedConfig.label}</b>
               </div>
 
               <div>
                 <span>Database table</span>
-                <b>{selectedImport.table}</b>
+                <b>{selectedConfig.table}</b>
               </div>
 
               <div>
-                <span>Mode</span>
-                <b>{selectedImport.mode}</b>
+                <span>Save mode</span>
+                <b>Upsert / update</b>
               </div>
 
               <div>
@@ -1244,18 +1370,18 @@ export default function ImporterPage() {
 
           <div className="help-grid">
             <div className="card">
-              <b>Finds headings automatically</b>
-              <p>It checks the whole sheet and finds the best heading row, even when headings are on row 4.</p>
+              <b>1. Choose register</b>
+              <p>Choose Personnel Register for attendance/personnel files. Choose Leave / Off Schedule for leave files.</p>
             </div>
 
             <div className="card">
-              <b>Personnel names</b>
-              <p>It joins FirstName + Surname and reads Code, Occupation and Department.</p>
+              <b>2. Upload Excel</b>
+              <p>The importer finds the correct heading row even if headings are not on row 1.</p>
             </div>
 
             <div className="card">
-              <b>Leave dates</b>
-              <p>It reads DATES like 23.04.2026 - 14.05.2026 and splits start/end automatically.</p>
+              <b>3. Check app</b>
+              <p>When it says Uploaded, go back to the normal app page and press CTRL + F5.</p>
             </div>
           </div>
 
