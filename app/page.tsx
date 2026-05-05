@@ -17,6 +17,7 @@ type TableName =
   | 'spares_orders'
   | 'parts_books'
   | 'personnel'
+  | 'leave_records'
   | 'work_logs'
   | 'tyres'
   | 'batteries'
@@ -33,6 +34,7 @@ const TABLES: TableName[] = [
   'spares_orders',
   'parts_books',
   'personnel',
+  'leave_records',
   'work_logs',
   'tyres',
   'batteries',
@@ -48,6 +50,7 @@ const emptyData: AppData = {
   spares_orders: [],
   parts_books: [],
   personnel: [],
+  leave_records: [],
   work_logs: [],
   tyres: [],
   batteries: [],
@@ -76,6 +79,38 @@ const nav = [
   ['admin', 'Admin']
 ]
 
+const shiftNames = ['Shift 1', 'Shift 2', 'Shift 3']
+
+const workshopRoles = [
+  'Manager',
+  'Foreman',
+  'Chargehand',
+  'Diesel Plant Fitter',
+  'Assistant',
+  'Tyre Fitter',
+  'Boiler Maker',
+  'Auto Electrical',
+  'Panel Beater',
+  'Wash Bay Attendant',
+  'Driver',
+  'Diesel Mechanic'
+]
+
+const personnelSections = [
+  'Management',
+  'Workshop',
+  'Field Service',
+  'Tyre Bay',
+  'Boiler Shop',
+  'Auto Electrical',
+  'Panel Beating',
+  'Wash Bay',
+  'Drivers',
+  'Stores'
+]
+
+const leaveTypes = ['Annual Leave', 'Sick Leave', 'Off Duty', 'Unpaid Leave', 'Training', 'AWOL']
+
 const nowIso = () => new Date().toISOString()
 const today = () => new Date().toISOString().slice(0, 10)
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
@@ -96,6 +131,25 @@ function isBetweenDates(start: any, end: any, date = today()) {
   const e = end ? new Date(end).getTime() : t
   if (Number.isNaN(s) || Number.isNaN(e)) return false
   return t >= s && t <= e
+}
+
+function daysInclusive(start: any, end: any) {
+  if (!start || !end) return 0
+  const s = new Date(start)
+  const e = new Date(end)
+  if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0
+  const diff = Math.floor((e.getTime() - s.getTime()) / 86400000) + 1
+  return Math.max(0, diff)
+}
+
+function isPastDate(value: any) {
+  if (!value) return false
+  return new Date(value).getTime() < new Date(today()).getTime()
+}
+
+function isFutureDate(value: any) {
+  if (!value) return false
+  return new Date(value).getTime() > new Date(today()).getTime()
 }
 
 function uniqueByFleet(rows: Row[]) {
@@ -197,6 +251,55 @@ function mapService(row: Row): Row {
     technician: String(getCell(row, ['technician', 'fitter', 'mechanic']) || '').trim(),
     notes: String(getCell(row, ['notes', 'remarks']) || '').trim(),
     created_at: nowIso()
+  })
+}
+
+function mapPersonnel(row: Row): Row {
+  const leaveBalance = getCell(row, ['leave balance', 'leave balance days', 'annual leave balance', 'leave days remaining'])
+  const leaveTaken = getCell(row, ['leave taken', 'leave taken days', 'days taken'])
+  return cleanRow({
+    id: String(getCell(row, ['id']) || uid()),
+    employee_no: String(getCell(row, ['employee no', 'employee number', 'clock no', 'clock number', 'staff no']) || '').trim(),
+    name: String(getCell(row, ['name', 'employee name', 'full name', 'person']) || '').trim(),
+    shift: String(getCell(row, ['shift', 'shift no', 'shift number']) || 'Shift 1').replace(/^1$/, 'Shift 1').replace(/^2$/, 'Shift 2').replace(/^3$/, 'Shift 3'),
+    section: String(getCell(row, ['section', 'department', 'area']) || 'Workshop').trim(),
+    role: String(getCell(row, ['role', 'position', 'job title', 'trade']) || 'Diesel Plant Fitter').trim(),
+    staff_group: String(getCell(row, ['staff group', 'group', 'level']) || '').trim(),
+    phone: String(getCell(row, ['phone', 'cell', 'mobile']) || '').trim(),
+    employment_status: String(getCell(row, ['status', 'employment status']) || 'Active').trim(),
+    leave_balance_days: one(leaveBalance || 30),
+    leave_taken_days: one(leaveTaken || 0),
+    leave_start: String(getCell(row, ['leave start', 'leave from', 'start date']) || '').trim(),
+    leave_end: String(getCell(row, ['leave end', 'leave to', 'end date']) || '').trim(),
+    leave_reason: String(getCell(row, ['leave reason', 'reason']) || '').trim(),
+    off_start: String(getCell(row, ['off start', 'off from']) || '').trim(),
+    off_end: String(getCell(row, ['off end', 'off to']) || '').trim(),
+    off_reason: String(getCell(row, ['off reason']) || '').trim(),
+    notes: String(getCell(row, ['notes', 'remarks']) || '').trim(),
+    created_at: nowIso(),
+    updated_at: nowIso()
+  })
+}
+
+function mapLeave(row: Row): Row {
+  const start = String(getCell(row, ['start date', 'leave start', 'from', 'leave from']) || '').trim()
+  const end = String(getCell(row, ['end date', 'leave end', 'to', 'leave to']) || '').trim()
+  const days = one(getCell(row, ['days', 'leave days']) || daysInclusive(start, end))
+  return cleanRow({
+    id: uid(),
+    employee_no: String(getCell(row, ['employee no', 'employee number', 'clock no', 'staff no']) || '').trim(),
+    person_name: String(getCell(row, ['name', 'employee name', 'full name', 'person']) || '').trim(),
+    shift: String(getCell(row, ['shift']) || '').trim(),
+    section: String(getCell(row, ['section', 'department', 'area']) || '').trim(),
+    role: String(getCell(row, ['role', 'position', 'trade']) || '').trim(),
+    leave_type: String(getCell(row, ['leave type', 'type']) || 'Annual Leave').trim(),
+    start_date: start,
+    end_date: end,
+    days,
+    reason: String(getCell(row, ['reason', 'notes']) || '').trim(),
+    status: String(getCell(row, ['status']) || 'Approved').trim(),
+    created_at: nowIso(),
+    updated_at: nowIso()
   })
 }
 
@@ -313,7 +416,28 @@ export default function Home() {
   const [partsBookForm, setPartsBookForm] = useState<Row>({ book_title: '', machine_group: 'Yellow Machine', machine_type: '', uploaded_by: '', file_name: '', extracted_part_numbers: '', extracted_text: '', notes: '' })
   const [sparesSearch, setSparesSearch] = useState('')
   const [sparesStage, setSparesStage] = useState('All')
-  const [personForm, setPersonForm] = useState<Row>({ name: '', section: '', role: '', phone: '', employment_status: 'Active', leave_start: '', leave_end: '', leave_reason: '' })
+  const [personForm, setPersonForm] = useState<Row>({
+    employee_no: '',
+    name: '',
+    shift: 'Shift 1',
+    section: 'Workshop',
+    role: 'Diesel Plant Fitter',
+    staff_group: 'Workshop Staff',
+    phone: '',
+    employment_status: 'Active',
+    leave_balance_days: 30,
+    leave_taken_days: 0,
+    leave_start: '',
+    leave_end: '',
+    leave_reason: '',
+    off_start: '',
+    off_end: '',
+    off_reason: ''
+  })
+  const [bulkPersonForm, setBulkPersonForm] = useState<Row>({ shift: 'Shift 1', section: 'Workshop', role: 'Diesel Plant Fitter', qty: 1 })
+  const [leaveForm, setLeaveForm] = useState<Row>({ person_name: '', employee_no: '', leave_type: 'Annual Leave', start_date: today(), end_date: today(), reason: '', status: 'Approved' })
+  const [personnelSearch, setPersonnelSearch] = useState('')
+  const [personnelShiftFilter, setPersonnelShiftFilter] = useState('All')
   const [workForm, setWorkForm] = useState<Row>({ person_name: '', fleet_no: '', section: '', work_date: today(), hours_worked: 0, work_type: 'Repair', notes: '' })
   const [tyreForm, setTyreForm] = useState<Row>({ serial_no: '', fleet_no: '', position: '', brand: '', size: '', fitment_date: today(), fitment_hours: 0, expected_life_hours: 5000, status: 'Fitted', notes: '' })
   const [batteryForm, setBatteryForm] = useState<Row>({ serial_no: '', fleet_no: '', volts: '12V', cca: '', fitment_date: today(), warranty_end: '', expected_life_months: 18, status: 'Fitted', notes: '' })
@@ -460,6 +584,25 @@ export default function Home() {
     setMessage(`${mapped.length} service schedule records uploaded.`)
   }
 
+
+  async function uploadPersonnel(file?: File) {
+    if (!file) return
+    const rows = await readExcelRows(file)
+    let peopleCount = 0
+    let leaveCount = 0
+    const mappedPeople = rows.map(mapPersonnel).filter((row) => row.name)
+    for (const row of mappedPeople) {
+      await saveRow('personnel', row, 'upsert')
+      peopleCount++
+    }
+    const mappedLeave = rows.map(mapLeave).filter((row) => row.person_name && row.start_date && row.end_date)
+    for (const row of mappedLeave) {
+      await saveRow('leave_records', row, 'insert')
+      leaveCount++
+    }
+    setMessage(`${peopleCount} personnel records uploaded. ${leaveCount} leave/off schedule rows imported.`)
+  }
+
   function attachPhoto(file?: File) {
     if (!file) return
     const reader = new FileReader()
@@ -537,6 +680,78 @@ export default function Home() {
     moveSpareOrder(order, 'Awaiting Delivery', { eta })
   }
 
+
+  function selectPersonForLeave(name: string) {
+    const person = data.personnel.find((p) => String(p.name || '').toLowerCase() === String(name || '').toLowerCase())
+    if (!person) return setLeaveForm((prev) => ({ ...prev, person_name: name }))
+    setLeaveForm((prev) => ({
+      ...prev,
+      person_name: person.name,
+      employee_no: person.employee_no || '',
+      shift: person.shift || '',
+      section: person.section || '',
+      role: person.role || ''
+    }))
+  }
+
+  async function saveLeaveRecord() {
+    const days = daysInclusive(leaveForm.start_date, leaveForm.end_date)
+    if (!leaveForm.person_name || !leaveForm.start_date || !leaveForm.end_date) return setMessage('Select employee and leave dates first.')
+    const leaveType = String(leaveForm.leave_type || 'Annual Leave')
+    const deductLeave = leaveType.toLowerCase().includes('annual') || leaveType.toLowerCase() === 'leave'
+    const record = cleanRow({
+      ...leaveForm,
+      id: uid(),
+      days,
+      status: leaveForm.status || 'Approved',
+      created_at: nowIso(),
+      updated_at: nowIso()
+    })
+    await saveRow('leave_records', record, 'insert')
+
+    const person = data.personnel.find((p) => String(p.name || '').toLowerCase() === String(leaveForm.person_name || '').toLowerCase() || (leaveForm.employee_no && p.employee_no === leaveForm.employee_no))
+    if (person) {
+      const nextBalance = deductLeave ? Math.max(0, n(person.leave_balance_days || 30) - days) : n(person.leave_balance_days || 30)
+      const nextTaken = deductLeave ? n(person.leave_taken_days || 0) + days : n(person.leave_taken_days || 0)
+      const isCurrent = isBetweenDates(leaveForm.start_date, leaveForm.end_date)
+      await saveRow('personnel', {
+        ...person,
+        employment_status: isCurrent ? (deductLeave ? 'On leave' : leaveType) : person.employment_status || 'Active',
+        leave_start: leaveForm.start_date,
+        leave_end: leaveForm.end_date,
+        leave_reason: `${leaveType}${leaveForm.reason ? ` - ${leaveForm.reason}` : ''}`,
+        leave_balance_days: one(nextBalance),
+        leave_taken_days: one(nextTaken)
+      }, 'upsert')
+    }
+    setLeaveForm({ person_name: '', employee_no: '', leave_type: 'Annual Leave', start_date: today(), end_date: today(), reason: '', status: 'Approved' })
+    setMessage(`${leaveType} saved for ${record.person_name}. ${deductLeave ? `${days} leave days deducted.` : 'No annual leave deducted.'}`)
+  }
+
+  async function clearPersonStatus(person: Row) {
+    await saveRow('personnel', { ...person, employment_status: 'Active', leave_start: '', leave_end: '', leave_reason: '', off_start: '', off_end: '', off_reason: '' }, 'upsert')
+    setMessage(`${person.name} marked active.`)
+  }
+
+  async function addBulkPersonnel() {
+    const qty = Math.max(1, Math.min(100, Math.floor(n(bulkPersonForm.qty || 1))))
+    for (let i = 1; i <= qty; i++) {
+      await saveRow('personnel', {
+        id: uid(),
+        employee_no: '',
+        name: `Vacant ${bulkPersonForm.role} ${bulkPersonForm.shift} ${i}`,
+        shift: bulkPersonForm.shift,
+        section: bulkPersonForm.section,
+        role: bulkPersonForm.role,
+        staff_group: String(bulkPersonForm.role || '').toLowerCase().includes('manager') ? 'Management' : 'Workshop Staff',
+        employment_status: 'Vacant',
+        leave_balance_days: 0,
+        leave_taken_days: 0
+      }, 'insert')
+    }
+    setMessage(`${qty} ${bulkPersonForm.role} slot(s) added to ${bulkPersonForm.shift}. Delete or rename them later when allocated.`)
+  }
+
   const filteredFleet = useMemo(() => {
     const q = search.toLowerCase()
     return data.fleet_machines.filter((m) => [m.fleet_no, m.machine_type, m.department, m.location, m.status].join(' ').toLowerCase().includes(q))
@@ -572,6 +787,21 @@ export default function Home() {
     const isOff = peopleOff.some((off) => off.id === p.id)
     return isSupervisor && !isOff
   })
+
+  const managers = data.personnel.filter((p) => `${p.role || ''} ${p.staff_group || ''}`.toLowerCase().includes('manager'))
+  const foremenRegister = data.personnel.filter((p) => `${p.role || ''} ${p.staff_group || ''}`.toLowerCase().includes('foreman'))
+  const chargehandsRegister = data.personnel.filter((p) => `${p.role || ''}`.toLowerCase().includes('chargehand'))
+  const qPersonnel = personnelSearch.toLowerCase().trim()
+  const filteredPersonnel = data.personnel.filter((p) => {
+    const text = [p.employee_no, p.name, p.shift, p.section, p.role, p.staff_group, p.phone, p.employment_status].join(' ').toLowerCase()
+    const matchSearch = !qPersonnel || text.includes(qPersonnel)
+    const matchShift = personnelShiftFilter === 'All' || String(p.shift || '') === personnelShiftFilter
+    return matchSearch && matchShift
+  })
+  const currentLeave = data.leave_records.filter((l) => isBetweenDates(l.start_date, l.end_date) && !String(l.status || '').toLowerCase().includes('cancel'))
+  const upcomingLeave = data.leave_records.filter((l) => isFutureDate(l.start_date) && !String(l.status || '').toLowerCase().includes('cancel'))
+  const pastLeave = data.leave_records.filter((l) => isPastDate(l.end_date))
+  const offSchedule = data.leave_records.filter((l) => ['sick', 'off', 'awol', 'training', 'unpaid'].some((word) => String(l.leave_type || '').toLowerCase().includes(word)))
   const servicesToday = data.services.filter((s) => dateOnly(s.due_date) === today() && !String(s.status || '').toLowerCase().includes('complete'))
   const machinesOnBreakdown = uniqueByFleet(openBreakdowns)
   const machinesBeingWorkedOn = uniqueByFleet([
@@ -607,9 +837,39 @@ export default function Home() {
       services: data.services.filter(match),
       tyres: data.tyres.filter(match),
       batteries: data.batteries.filter(match),
-      work: data.work_logs.filter(match)
+      work: data.work_logs.filter(match),
+      leave: data.leave_records.filter((row) => !fleet || String(row.person_name || '').toLowerCase().includes(fleet) || String(row.employee_no || '').toLowerCase().includes(fleet))
     }
   }, [data, reportFleet])
+
+
+  function renderShiftPanel(shiftName: string) {
+    const shiftPeople = filteredPersonnel.filter((p) => String(p.shift || 'Shift 1') === shiftName)
+    const activeShift = shiftPeople.filter((p) => String(p.employment_status || '').toLowerCase().includes('active'))
+    return (
+      <div className="shift-panel" key={shiftName}>
+        <div className="shift-head">
+          <div>
+            <h3>{shiftName}</h3>
+            <p>{activeShift.length} active · {shiftPeople.length} total people/slots</p>
+          </div>
+          <Badge value={shiftName} />
+        </div>
+        <div className="role-count-grid">
+          {workshopRoles.map((role) => {
+            const people = shiftPeople.filter((p) => String(p.role || '').toLowerCase() === role.toLowerCase())
+            return (
+              <button type="button" key={role} className="role-count" onClick={() => { setPersonnelSearch(role); setPersonnelShiftFilter(shiftName) }}>
+                <span>{role}</span>
+                <b>{people.length}</b>
+              </button>
+            )
+          })}
+        </div>
+        <MiniTable rows={shiftPeople.slice(0, 12)} columns={[{ key: 'employee_no', label: 'Emp No' }, { key: 'name', label: 'Name' }, { key: 'role', label: 'Role' }, { key: 'section', label: 'Section' }, { key: 'employment_status', label: 'Status' }, { key: 'leave_balance_days', label: 'Leave Bal' }]} empty={`No people loaded for ${shiftName}.`} />
+      </div>
+    )
+  }
 
   function renderOrderCards(rows: Row[], empty = 'No spares in this section yet.') {
     if (!rows.length) return <div className="empty">{empty}</div>
@@ -1058,40 +1318,165 @@ export default function Home() {
       )}
 
       {tab === 'personnel' && (
-        <section className="panel">
-          <SectionTitle title="Personnel, Leave and Hours" subtitle="Break people into sections, record leave and summarise work hours by person and machine." />
+        <section className="panel personnel-dark">
+          <SectionTitle title="Personnel Register, Shifts and Leave Control" subtitle="Shift 1, Shift 2 and Shift 3 manpower, managers, foremen, off schedule, leave balance and full leave history." />
+
+          <div className="personnel-hero">
+            <div>
+              <span className="eyebrow">WORKSHOP PERSONNEL CONTROL</span>
+              <h2>Live manpower board</h2>
+              <p>Use dropdowns, badges and Excel uploads to control who is on shift, who is off, who is on leave and how many people are available by trade.</p>
+            </div>
+            <div className="hero-badges">
+              <span>Managers: <b>{managers.length}/4</b></span>
+              <span>Foremen: <b>{foremenRegister.length}/2</b></span>
+              <span>Chargehands: <b>{chargehandsRegister.length}</b></span>
+              <span>People off: <b>{peopleOff.length}</b></span>
+            </div>
+          </div>
+
+          <div className="stats-grid compact-stats">
+            <StatCard label="Total Personnel" value={data.personnel.length} note="Loaded people and vacancies" icon="👥" tone="blue" />
+            <StatCard label="Active Today" value={activePersonnel.length} note="Employment status active" icon="✅" tone="green" />
+            <StatCard label="People Off" value={peopleOff.length} note="Leave, sick, off duty" icon="⚠️" tone="red" />
+            <StatCard label="Current Leave" value={currentLeave.length} note="Leave running today" icon="🏖️" tone="orange" />
+            <StatCard label="Upcoming Leave" value={upcomingLeave.length} note="Future leave records" icon="📅" tone="grey" />
+            <StatCard label="Past Leave" value={pastLeave.length} note="History available" icon="🕘" tone="grey" />
+          </div>
+
+          <div className="toolbar personnel-toolbar">
+            <input className="search" placeholder="Search name, employee no, shift, trade, section..." value={personnelSearch} onChange={(e) => setPersonnelSearch(e.target.value)} />
+            <select value={personnelShiftFilter} onChange={(e) => setPersonnelShiftFilter(e.target.value)}>
+              <option>All</option>
+              {shiftNames.map((shift) => <option key={shift}>{shift}</option>)}
+            </select>
+            <button className="ghost" onClick={() => { setPersonnelSearch(''); setPersonnelShiftFilter('All') }}>Clear filters</button>
+            {isAdmin && <label className="upload">Upload Personnel / Leave Excel<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadPersonnel(e.target.files?.[0])} /></label>}
+          </div>
+
+          <div className="shift-grid">
+            {shiftNames.map((shift) => renderShiftPanel(shift))}
+          </div>
+
           <div className="two-col">
-            <div className="card">
-              <h3>Personnel register</h3>
+            <div className="card dark-card">
+              <h3>Add / update employee</h3>
               <div className="form-grid compact">
-                <input placeholder="Name" value={personForm.name} onChange={(e) => setPersonForm({ ...personForm, name: e.target.value })} />
-                <input placeholder="Section" value={personForm.section} onChange={(e) => setPersonForm({ ...personForm, section: e.target.value })} />
-                <input placeholder="Role" value={personForm.role} onChange={(e) => setPersonForm({ ...personForm, role: e.target.value })} />
+                <input placeholder="Employee No / Clock No" value={personForm.employee_no} onChange={(e) => setPersonForm({ ...personForm, employee_no: e.target.value })} />
+                <input placeholder="Full Name" value={personForm.name} onChange={(e) => setPersonForm({ ...personForm, name: e.target.value })} />
+                <select value={personForm.shift} onChange={(e) => setPersonForm({ ...personForm, shift: e.target.value })}>{shiftNames.map((shift) => <option key={shift}>{shift}</option>)}</select>
+                <select value={personForm.section} onChange={(e) => setPersonForm({ ...personForm, section: e.target.value })}>{personnelSections.map((section) => <option key={section}>{section}</option>)}</select>
+                <select value={personForm.role} onChange={(e) => setPersonForm({ ...personForm, role: e.target.value, staff_group: e.target.value === 'Manager' ? 'Management' : e.target.value === 'Foreman' ? 'Foreman' : personForm.staff_group })}>{workshopRoles.map((role) => <option key={role}>{role}</option>)}</select>
+                <select value={personForm.staff_group} onChange={(e) => setPersonForm({ ...personForm, staff_group: e.target.value })}>
+                  <option>Workshop Staff</option><option>Management</option><option>Foreman</option><option>Chargehand</option><option>Support</option>
+                </select>
                 <input placeholder="Phone" value={personForm.phone} onChange={(e) => setPersonForm({ ...personForm, phone: e.target.value })} />
-                <select value={personForm.employment_status} onChange={(e) => setPersonForm({ ...personForm, employment_status: e.target.value })}><option>Active</option><option>On leave</option><option>Suspended</option><option>Left company</option></select>
-                <input type="date" value={personForm.leave_start} onChange={(e) => setPersonForm({ ...personForm, leave_start: e.target.value })} />
-                <input type="date" value={personForm.leave_end} onChange={(e) => setPersonForm({ ...personForm, leave_end: e.target.value })} />
-                <input placeholder="Leave reason" value={personForm.leave_reason} onChange={(e) => setPersonForm({ ...personForm, leave_reason: e.target.value })} />
-                <button className="primary" onClick={() => saveRow('personnel', personForm)}>Save Person</button>
+                <select value={personForm.employment_status} onChange={(e) => setPersonForm({ ...personForm, employment_status: e.target.value })}>
+                  <option>Active</option><option>On leave</option><option>Off Duty</option><option>Sick Leave</option><option>Suspended</option><option>Vacant</option><option>Left company</option>
+                </select>
+                <input type="number" placeholder="Leave balance days" value={personForm.leave_balance_days} onChange={(e) => setPersonForm({ ...personForm, leave_balance_days: e.target.value })} />
+                <input type="number" placeholder="Leave taken days" value={personForm.leave_taken_days} onChange={(e) => setPersonForm({ ...personForm, leave_taken_days: e.target.value })} />
+                <input placeholder="Notes" value={personForm.notes || ''} onChange={(e) => setPersonForm({ ...personForm, notes: e.target.value })} />
+                <button className="primary" onClick={() => saveRow('personnel', { ...personForm, leave_balance_days: one(personForm.leave_balance_days), leave_taken_days: one(personForm.leave_taken_days) }, 'upsert')}>Save Employee</button>
               </div>
             </div>
-            <div className="card">
-              <h3>Work hours log</h3>
+
+            <div className="card dark-card">
+              <h3>Add manpower by quantity</h3>
+              <p className="muted">Use this to add vacant slots or planned positions by shift/trade, then rename them to real employees later.</p>
               <div className="form-grid compact">
-                <input placeholder="Person name" value={workForm.person_name} onChange={(e) => setWorkForm({ ...workForm, person_name: e.target.value })} />
-                <input placeholder="Fleet No" value={workForm.fleet_no} onChange={(e) => setWorkForm({ ...workForm, fleet_no: e.target.value })} />
-                <input placeholder="Section" value={workForm.section} onChange={(e) => setWorkForm({ ...workForm, section: e.target.value })} />
-                <input type="date" value={workForm.work_date} onChange={(e) => setWorkForm({ ...workForm, work_date: e.target.value })} />
-                <input type="number" placeholder="Hours worked" value={workForm.hours_worked} onChange={(e) => setWorkForm({ ...workForm, hours_worked: e.target.value })} />
-                <select value={workForm.work_type} onChange={(e) => setWorkForm({ ...workForm, work_type: e.target.value })}><option>Repair</option><option>Service</option><option>Breakdown</option><option>Inspection</option><option>Tyre</option><option>Battery</option></select>
-                <input placeholder="Notes" value={workForm.notes} onChange={(e) => setWorkForm({ ...workForm, notes: e.target.value })} />
-                <button className="primary" onClick={() => saveRow('work_logs', { ...workForm, hours_worked: one(workForm.hours_worked) })}>Save Hours</button>
+                <select value={bulkPersonForm.shift} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, shift: e.target.value })}>{shiftNames.map((shift) => <option key={shift}>{shift}</option>)}</select>
+                <select value={bulkPersonForm.section} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, section: e.target.value })}>{personnelSections.map((section) => <option key={section}>{section}</option>)}</select>
+                <select value={bulkPersonForm.role} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, role: e.target.value })}>{workshopRoles.map((role) => <option key={role}>{role}</option>)}</select>
+                <input type="number" min="1" placeholder="Quantity" value={bulkPersonForm.qty} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, qty: e.target.value })} />
+                <button className="primary" onClick={addBulkPersonnel}>Add Quantity</button>
+              </div>
+              <div className="target-boxes">
+                <span className={managers.length === 4 ? 'ok' : 'warn'}>Managers target: {managers.length}/4</span>
+                <span className={foremenRegister.length === 2 ? 'ok' : 'warn'}>Foremen target: {foremenRegister.length}/2</span>
               </div>
             </div>
           </div>
-          <MiniTable rows={data.personnel} columns={[{ key: 'name', label: 'Name' }, { key: 'section', label: 'Section' }, { key: 'role', label: 'Role' }, { key: 'phone', label: 'Phone' }, { key: 'leave_start', label: 'Leave Start' }, { key: 'leave_end', label: 'Leave End' }, { key: 'employment_status', label: 'Status' }]} />
-          <h3>Hours worked</h3>
-          <MiniTable rows={data.work_logs} columns={[{ key: 'person_name', label: 'Person' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'section', label: 'Section' }, { key: 'work_date', label: 'Date' }, { key: 'hours_worked', label: 'Hours' }, { key: 'work_type', label: 'Type' }]} />
+
+          <div className="two-col">
+            <div className="card dark-card">
+              <h3>Leave / off schedule entry</h3>
+              <div className="form-grid compact">
+                <input list="personnel-names" placeholder="Employee name" value={leaveForm.person_name} onChange={(e) => selectPersonForLeave(e.target.value)} />
+                <datalist id="personnel-names">{data.personnel.map((p) => <option key={p.id} value={p.name} />)}</datalist>
+                <input placeholder="Employee No" value={leaveForm.employee_no} onChange={(e) => setLeaveForm({ ...leaveForm, employee_no: e.target.value })} />
+                <select value={leaveForm.leave_type} onChange={(e) => setLeaveForm({ ...leaveForm, leave_type: e.target.value })}>{leaveTypes.map((type) => <option key={type}>{type}</option>)}</select>
+                <input type="date" value={leaveForm.start_date} onChange={(e) => setLeaveForm({ ...leaveForm, start_date: e.target.value })} />
+                <input type="date" value={leaveForm.end_date} onChange={(e) => setLeaveForm({ ...leaveForm, end_date: e.target.value })} />
+                <select value={leaveForm.status} onChange={(e) => setLeaveForm({ ...leaveForm, status: e.target.value })}><option>Approved</option><option>Pending</option><option>Cancelled</option></select>
+                <input placeholder="Reason / notes" value={leaveForm.reason} onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })} />
+                <button className="primary" onClick={saveLeaveRecord}>Save Leave / Off Record</button>
+              </div>
+              <div className="leave-preview">Days selected: <b>{daysInclusive(leaveForm.start_date, leaveForm.end_date)}</b></div>
+            </div>
+
+            <div className="card dark-card">
+              <h3>Managers and foremen</h3>
+              <div className="manager-grid">
+                <div><b>Managers</b><MiniTable rows={managers} columns={[{ key: 'name', label: 'Name' }, { key: 'shift', label: 'Shift' }, { key: 'phone', label: 'Phone' }, { key: 'employment_status', label: 'Status' }]} empty="No managers loaded yet." /></div>
+                <div><b>Foremen / Chargehands</b><MiniTable rows={[...foremenRegister, ...chargehandsRegister]} columns={[{ key: 'name', label: 'Name' }, { key: 'shift', label: 'Shift' }, { key: 'role', label: 'Role' }, { key: 'employment_status', label: 'Status' }]} empty="No foremen or chargehands loaded yet." /></div>
+              </div>
+            </div>
+          </div>
+
+          <div className="two-col">
+            <div className="card dark-card">
+              <h3>Current leave / off now</h3>
+              <MiniTable rows={currentLeave} columns={[{ key: 'person_name', label: 'Name' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'days', label: 'Days' }, { key: 'status', label: 'Status' }]} empty="No current leave today." />
+            </div>
+            <div className="card dark-card">
+              <h3>Upcoming leave</h3>
+              <MiniTable rows={upcomingLeave.slice(0, 12)} columns={[{ key: 'person_name', label: 'Name' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'days', label: 'Days' }, { key: 'status', label: 'Status' }]} empty="No upcoming leave loaded." />
+            </div>
+          </div>
+
+          <div className="card dark-card">
+            <h3>Full personnel register</h3>
+            <MiniTable rows={filteredPersonnel} columns={[{ key: 'employee_no', label: 'Emp No' }, { key: 'name', label: 'Name' }, { key: 'shift', label: 'Shift' }, { key: 'section', label: 'Section' }, { key: 'role', label: 'Role' }, { key: 'phone', label: 'Phone' }, { key: 'employment_status', label: 'Status' }, { key: 'leave_balance_days', label: 'Leave Bal' }, { key: 'leave_taken_days', label: 'Taken' }]} />
+            <div className="person-actions">
+              {filteredPersonnel.slice(0, 30).map((person) => (
+                <div className="person-action-row" key={`act-${person.id}`}>
+                  <span>{person.name} · {person.shift} · {person.role}</span>
+                  <div>
+                    <button onClick={() => { setPersonForm({ ...person }); window.scrollTo({ top: 0, behavior: 'smooth' }) }}>Edit</button>
+                    <button onClick={() => clearPersonStatus(person)}>Mark active</button>
+                    {isAdmin && <button className="danger" onClick={() => deleteRow('personnel', person.id)}>Remove</button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="two-col">
+            <div className="card dark-card">
+              <h3>Past leave history</h3>
+              <MiniTable rows={pastLeave} columns={[{ key: 'person_name', label: 'Name' }, { key: 'employee_no', label: 'Emp No' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'days', label: 'Days' }, { key: 'reason', label: 'Reason' }]} empty="No past leave history yet." />
+            </div>
+            <div className="card dark-card">
+              <h3>Off schedule</h3>
+              <MiniTable rows={offSchedule} columns={[{ key: 'person_name', label: 'Name' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'reason', label: 'Reason' }, { key: 'status', label: 'Status' }]} empty="No off schedule records yet." />
+            </div>
+          </div>
+
+          <div className="card dark-card">
+            <h3>Work hours log</h3>
+            <div className="form-grid compact">
+              <input list="personnel-names" placeholder="Person name" value={workForm.person_name} onChange={(e) => setWorkForm({ ...workForm, person_name: e.target.value })} />
+              <input placeholder="Fleet No" value={workForm.fleet_no} onChange={(e) => setWorkForm({ ...workForm, fleet_no: e.target.value })} />
+              <select value={workForm.section} onChange={(e) => setWorkForm({ ...workForm, section: e.target.value })}>{personnelSections.map((section) => <option key={section}>{section}</option>)}</select>
+              <input type="date" value={workForm.work_date} onChange={(e) => setWorkForm({ ...workForm, work_date: e.target.value })} />
+              <input type="number" placeholder="Hours worked" value={workForm.hours_worked} onChange={(e) => setWorkForm({ ...workForm, hours_worked: e.target.value })} />
+              <select value={workForm.work_type} onChange={(e) => setWorkForm({ ...workForm, work_type: e.target.value })}><option>Repair</option><option>Service</option><option>Breakdown</option><option>Inspection</option><option>Tyre</option><option>Battery</option></select>
+              <input placeholder="Notes" value={workForm.notes} onChange={(e) => setWorkForm({ ...workForm, notes: e.target.value })} />
+              <button className="primary" onClick={() => saveRow('work_logs', { ...workForm, hours_worked: one(workForm.hours_worked) })}>Save Hours</button>
+            </div>
+            <MiniTable rows={data.work_logs} columns={[{ key: 'person_name', label: 'Person' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'section', label: 'Section' }, { key: 'work_date', label: 'Date' }, { key: 'hours_worked', label: 'Hours' }, { key: 'work_type', label: 'Type' }]} />
+          </div>
         </section>
       )}
 
@@ -1175,6 +1560,8 @@ export default function Home() {
           <MiniTable rows={reportRows.services} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'scheduled_hours', label: 'Due Hrs' }, { key: 'due_date', label: 'Due Date' }, { key: 'status', label: 'Status' }]} />
           <h3>Personnel Hours</h3>
           <MiniTable rows={reportRows.work} columns={[{ key: 'person_name', label: 'Person' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'work_date', label: 'Date' }, { key: 'hours_worked', label: 'Hours' }, { key: 'work_type', label: 'Type' }]} />
+          <h3>Leave History</h3>
+          <MiniTable rows={reportRows.leave} columns={[{ key: 'person_name', label: 'Person' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'days', label: 'Days' }, { key: 'reason', label: 'Reason' }]} />
         </section>
       )}
 
@@ -1193,6 +1580,7 @@ export default function Home() {
             <button className="ghost" onClick={loadAll}>Reload From Supabase</button>
             {isAdmin && <label className="upload">Upload Fleet Excel<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadFleet(e.target.files?.[0])} /></label>}
             {isAdmin && <label className="upload">Upload Service Schedule<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadService(e.target.files?.[0])} /></label>}
+            {isAdmin && <label className="upload">Upload Personnel / Leave<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadPersonnel(e.target.files?.[0])} /></label>}
           </div>
           <div className="card">
             <h3>Important</h3>
