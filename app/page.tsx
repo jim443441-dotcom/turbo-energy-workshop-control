@@ -20,8 +20,12 @@ type TableName =
   | 'leave_records'
   | 'work_logs'
   | 'tyres'
+  | 'tyre_measurements'
+  | 'tyre_orders'
   | 'batteries'
+  | 'battery_orders'
   | 'photo_logs'
+  | 'operations'
 
 type AppData = Record<TableName, Row[]>
 
@@ -37,8 +41,12 @@ const TABLES: TableName[] = [
   'leave_records',
   'work_logs',
   'tyres',
+  'tyre_measurements',
+  'tyre_orders',
   'batteries',
-  'photo_logs'
+  'battery_orders',
+  'photo_logs',
+  'operations'
 ]
 
 const emptyData: AppData = {
@@ -53,8 +61,12 @@ const emptyData: AppData = {
   leave_records: [],
   work_logs: [],
   tyres: [],
+  tyre_measurements: [],
+  tyre_orders: [],
   batteries: [],
-  photo_logs: []
+  battery_orders: [],
+  photo_logs: [],
+  operations: []
 }
 
 const loginUsers = [
@@ -66,7 +78,7 @@ const loginUsers = [
 
 const nav = [
   ['dashboard', 'Dashboard'],
-  ['fleet', 'Fleet Register'],
+  ['fleet', 'Fleet'],
   ['breakdowns', 'Breakdowns'],
   ['repairs', 'Repairs'],
   ['services', 'Services'],
@@ -74,42 +86,23 @@ const nav = [
   ['personnel', 'Personnel'],
   ['tyres', 'Tyres'],
   ['batteries', 'Batteries'],
+  ['operations', 'Operations'],
   ['photos', 'Photos'],
   ['reports', 'Reports'],
   ['admin', 'Admin']
 ]
 
 const shiftNames = ['Shift 1', 'Shift 2', 'Shift 3']
-
-const workshopRoles = [
-  'Manager',
-  'Foreman',
-  'Chargehand',
-  'Diesel Plant Fitter',
-  'Assistant',
-  'Tyre Fitter',
-  'Boiler Maker',
-  'Auto Electrical',
-  'Panel Beater',
-  'Wash Bay Attendant',
-  'Driver',
-  'Diesel Mechanic'
-]
-
-const personnelSections = [
-  'Management',
-  'Workshop',
-  'Field Service',
-  'Tyre Bay',
-  'Boiler Shop',
-  'Auto Electrical',
-  'Panel Beating',
-  'Wash Bay',
-  'Drivers',
-  'Stores'
-]
-
-const leaveTypes = ['Annual Leave', 'Sick Leave', 'Off Duty', 'Unpaid Leave', 'Training', 'AWOL']
+const machineGroups = ['Truck', 'Yellow Machine', 'Light Vehicle', 'Plant', 'Bus', 'Trailer']
+const workshopSections = ['Mechanical', 'Auto Electrical', 'Tyre Bay', 'Boiler Shop', 'Stores', 'Panel Beating', 'Wash Bay', 'Operations']
+const orderStages = ['Requested', 'Awaiting Funding', 'Funded', 'Awaiting Delivery', 'Delivered', 'Cancelled']
+const orderTypes = ['Not selected', 'Local Order', 'International Order', 'Quotation Required']
+const priorities = ['Low', 'Normal', 'High', 'Critical']
+const tyrePositions = ['FL', 'FR', 'R1L', 'R1R', 'R2L', 'R2R', 'R3L', 'R3R', 'Spare', 'Loader Front L', 'Loader Front R', 'Loader Rear L', 'Loader Rear R']
+const batteryVoltages = ['12V', '24V', '36V', '48V', '60V', '72V']
+const personnelRoles = ['Manager', 'Foreman', 'Chargehand', 'Diesel Plant Fitter', 'Assistant', 'Tyre Fitter', 'Boiler Maker', 'Auto Electrical', 'Panel Beater', 'Wash Bay Attendant', 'Driver', 'Diesel Mechanic']
+const leaveTypes = ['Annual Leave', 'Sick Leave', 'Off Duty', 'Training', 'Unpaid Leave', 'AWOL']
+const operationMachineTypes = ['Truck', 'ADT', 'FEL', 'Excavator', 'Dozer', 'Grader', 'Compactor', 'TLB', 'LDV', 'Bus']
 
 const nowIso = () => new Date().toISOString()
 const today = () => new Date().toISOString().slice(0, 10)
@@ -124,27 +117,20 @@ function dateOnly(value: any) {
   return d.toISOString().slice(0, 10)
 }
 
-function isBetweenDates(start: any, end: any, date = today()) {
-  if (!start && !end) return false
-  const t = new Date(date).getTime()
-  const s = start ? new Date(start).getTime() : t
-  const e = end ? new Date(end).getTime() : t
-  if (Number.isNaN(s) || Number.isNaN(e)) return false
-  return t >= s && t <= e
-}
-
 function daysInclusive(start: any, end: any) {
   if (!start || !end) return 0
   const s = new Date(start)
   const e = new Date(end)
   if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0
-  const diff = Math.floor((e.getTime() - s.getTime()) / 86400000) + 1
-  return Math.max(0, diff)
+  return Math.max(0, Math.floor((e.getTime() - s.getTime()) / 86400000) + 1)
 }
 
-function isPastDate(value: any) {
-  if (!value) return false
-  return new Date(value).getTime() < new Date(today()).getTime()
+function isBetweenDates(start: any, end: any, d = today()) {
+  if (!start && !end) return false
+  const t = new Date(d).getTime()
+  const s = start ? new Date(start).getTime() : t
+  const e = end ? new Date(end).getTime() : t
+  return !Number.isNaN(s) && !Number.isNaN(e) && t >= s && t <= e
 }
 
 function isFutureDate(value: any) {
@@ -152,211 +138,205 @@ function isFutureDate(value: any) {
   return new Date(value).getTime() > new Date(today()).getTime()
 }
 
-function uniqueByFleet(rows: Row[]) {
-  const seen = new Set<string>()
-  return rows.filter((row) => {
-    const fleet = String(row.fleet_no || row.machine_fleet_no || '').trim()
-    if (!fleet || seen.has(fleet)) return false
-    seen.add(fleet)
-    return true
-  })
+function isPastDate(value: any) {
+  if (!value) return false
+  return new Date(value).getTime() < new Date(today()).getTime()
 }
 
 function lowerKey(value: string) {
-  return String(value || '')
-    .toLowerCase()
-    .replace(/[\s_\-\.\/]+/g, '')
-    .trim()
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
 function getCell(row: Row, names: string[]) {
-  const map: Row = {}
-  Object.keys(row || {}).forEach((key) => {
-    map[lowerKey(key)] = row[key]
-  })
+  const keys = Object.keys(row)
   for (const name of names) {
-    const value = map[lowerKey(name)]
-    if (value !== undefined && value !== null && String(value).trim() !== '') return value
+    const wanted = lowerKey(name)
+    const found = keys.find((key) => lowerKey(key) === wanted)
+    if (found !== undefined && row[found] !== undefined && row[found] !== null) return row[found]
   }
   return ''
 }
 
 function cleanRow(row: Row) {
-  const output: Row = {}
+  const next: Row = {}
   Object.entries(row).forEach(([key, value]) => {
-    if (value !== undefined && value !== null && value !== '') output[key] = value
+    if (value === undefined || value === null) return
+    if (typeof value === 'string' && value.trim() === '') return
+    next[key] = value
   })
-  return output
+  return next
 }
 
-function statusClass(status: string) {
+function statusClass(status: any) {
   const s = String(status || '').toLowerCase()
-  if (s.includes('available') || s.includes('online') || s.includes('complete') || s.includes('delivered') || s.includes('received') || s.includes('funded') || s.includes('in stock')) return 'good'
-  if (s.includes('due') || s.includes('order') || s.includes('pending') || s.includes('progress') || s.includes('awaiting')) return 'warn'
-  if (s.includes('down') || s.includes('offline') || s.includes('critical') || s.includes('repair')) return 'bad'
+  if (s.includes('critical') || s.includes('open') || s.includes('break') || s.includes('awaiting') || s.includes('low') || s.includes('due')) return 'danger'
+  if (s.includes('funded') || s.includes('progress') || s.includes('request') || s.includes('quote') || s.includes('leave')) return 'warn'
+  if (s.includes('complete') || s.includes('delivered') || s.includes('available') || s.includes('active') || s.includes('stock') || s.includes('approved')) return 'good'
   return 'neutral'
 }
 
-function readExcelRows(file: File): Promise<Row[]> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = (event) => {
-      try {
-        const data = new Uint8Array(event.target?.result as ArrayBuffer)
-        const workbook = XLSX.read(data, { type: 'array' })
-        const sheet = workbook.Sheets[workbook.SheetNames[0]]
-        resolve(XLSX.utils.sheet_to_json(sheet, { defval: '' }))
-      } catch (error) {
-        reject(error)
-      }
-    }
-    reader.onerror = reject
-    reader.readAsArrayBuffer(file)
+function uniqueBy(rows: Row[], keyName: string) {
+  const seen = new Set<string>()
+  return rows.filter((row) => {
+    const key = String(row[keyName] || '').trim()
+    if (!key || seen.has(key)) return false
+    seen.add(key)
+    return true
   })
 }
 
+function safeJsonParse(value: any, fallback: any) {
+  try {
+    if (!value) return fallback
+    if (typeof value !== 'string') return value
+    return JSON.parse(value)
+  } catch {
+    return fallback
+  }
+}
+
+async function readExcelRows(file: File): Promise<Row[]> {
+  const buffer = await file.arrayBuffer()
+  const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
+  const sheetName = workbook.SheetNames[0]
+  const sheet = workbook.Sheets[sheetName]
+  return XLSX.utils.sheet_to_json(sheet, { defval: '' }) as Row[]
+}
+
+function fileToDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result || ''))
+    reader.onerror = reject
+    reader.readAsDataURL(file)
+  })
+}
+
+function arrayBufferToText(buffer: ArrayBuffer) {
+  const bytes = new Uint8Array(buffer)
+  let output = ''
+  const max = Math.min(bytes.length, 1800000)
+  for (let i = 0; i < max; i++) {
+    const code = bytes[i]
+    output += code >= 32 && code <= 126 ? String.fromCharCode(code) : ' '
+  }
+  return output
+}
+
+function extractPartNumbers(text: string) {
+  const matches = String(text || '').toUpperCase().match(/\b[A-Z0-9]{2,}[-/.]?[A-Z0-9]{2,}[-/.]?[A-Z0-9]{0,}\b/g) || []
+  const banned = new Set(['HTTP', 'HTTPS', 'DATE', 'PAGE', 'PART', 'NUMBER', 'MODEL', 'SERIAL', 'PDF', 'WWW'])
+  return Array.from(new Set(matches.map((x) => x.replace(/[.,;:]$/g, '')).filter((x) => x.length >= 5 && !banned.has(x)))).slice(0, 250)
+}
+
 function mapFleet(row: Row): Row {
-  const hours = getCell(row, ['hours', 'current hours', 'hour meter', 'hmr', 'machine hours'])
-  const lastService = getCell(row, ['last service hours', 'last service', 'last service hmr'])
-  const interval = getCell(row, ['service interval', 'interval', 'service interval hours']) || 250
+  const fleet_no = String(getCell(row, ['fleet_no', 'fleet', 'fleet number', 'machine', 'unit']) || '').trim()
   return cleanRow({
-    id: uid(),
-    fleet_no: String(getCell(row, ['fleet', 'fleet no', 'fleet number', 'unit', 'unit no', 'machine', 'machine no', 'equipment']) || '').trim(),
-    machine_type: String(getCell(row, ['type', 'machine type', 'equipment type', 'category']) || '').trim(),
-    make_model: String(getCell(row, ['make', 'model', 'make model', 'description']) || '').trim(),
-    reg_no: String(getCell(row, ['reg', 'registration', 'registration no', 'plate']) || '').trim(),
-    department: String(getCell(row, ['department', 'section', 'allocation']) || '').trim(),
-    location: String(getCell(row, ['location', 'site', 'area']) || '').trim(),
-    hours: one(hours),
-    mileage: one(getCell(row, ['mileage', 'km', 'kilometres'])),
-    status: String(getCell(row, ['status', 'availability', 'online status']) || 'Available').trim(),
-    service_interval_hours: one(interval),
-    last_service_hours: one(lastService),
-    next_service_hours: one(lastService) + one(interval),
-    notes: String(getCell(row, ['notes', 'remarks', 'comment']) || '').trim(),
-    updated_at: nowIso()
+    id: fleet_no || uid(),
+    fleet_no,
+    machine_type: getCell(row, ['machine_type', 'type', 'machine type']),
+    make_model: getCell(row, ['make_model', 'make model', 'model']),
+    reg_no: getCell(row, ['reg_no', 'registration', 'reg']),
+    department: getCell(row, ['department', 'dept']),
+    location: getCell(row, ['location', 'site']),
+    hours: Number(getCell(row, ['hours', 'hm', 'hour meter']) || 0),
+    mileage: Number(getCell(row, ['mileage', 'km', 'odometer']) || 0),
+    status: getCell(row, ['status']) || 'Available',
+    service_interval_hours: Number(getCell(row, ['service_interval_hours', 'service interval']) || 250),
+    last_service_hours: Number(getCell(row, ['last_service_hours', 'last service']) || 0),
+    next_service_hours: Number(getCell(row, ['next_service_hours', 'next service']) || 0),
+    notes: getCell(row, ['notes'])
+  })
+}
+
+function mapPersonnel(row: Row): Row {
+  const employee_no = String(getCell(row, ['employee_no', 'employee number', 'emp no', 'clock no']) || '').trim()
+  const name = String(getCell(row, ['name', 'employee', 'person']) || '').trim()
+  return cleanRow({
+    id: employee_no || name || uid(),
+    employee_no,
+    name,
+    shift: getCell(row, ['shift']) || 'Shift 1',
+    section: getCell(row, ['section', 'department']) || 'Workshop',
+    role: getCell(row, ['role', 'trade', 'position']) || 'Diesel Plant Fitter',
+    staff_group: getCell(row, ['staff_group', 'group']) || 'Workshop Staff',
+    phone: getCell(row, ['phone', 'cell']),
+    employment_status: getCell(row, ['employment_status', 'status']) || 'Active',
+    leave_balance_days: Number(getCell(row, ['leave_balance_days', 'leave balance']) || 30),
+    leave_taken_days: Number(getCell(row, ['leave_taken_days', 'leave taken']) || 0),
+    leave_start: dateOnly(getCell(row, ['leave_start', 'leave start'])),
+    leave_end: dateOnly(getCell(row, ['leave_end', 'leave end'])),
+    leave_reason: getCell(row, ['leave_reason', 'leave reason']),
+    notes: getCell(row, ['notes'])
   })
 }
 
 function mapService(row: Row): Row {
   return cleanRow({
     id: uid(),
-    fleet_no: String(getCell(row, ['fleet', 'fleet no', 'machine', 'machine no', 'unit']) || '').trim(),
-    service_type: String(getCell(row, ['service type', 'type', 'service']) || 'Scheduled service').trim(),
-    scheduled_hours: one(getCell(row, ['scheduled hours', 'due hours', 'next service hours', 'hmr'])),
-    due_date: String(getCell(row, ['due date', 'date', 'service date']) || '').trim(),
-    completed_date: '',
-    completed_hours: 0,
-    status: String(getCell(row, ['status']) || 'Due').trim(),
-    technician: String(getCell(row, ['technician', 'fitter', 'mechanic']) || '').trim(),
-    notes: String(getCell(row, ['notes', 'remarks']) || '').trim(),
-    created_at: nowIso()
-  })
-}
-
-function mapPersonnel(row: Row): Row {
-  const leaveBalance = getCell(row, ['leave balance', 'leave balance days', 'annual leave balance', 'leave days remaining'])
-  const leaveTaken = getCell(row, ['leave taken', 'leave taken days', 'days taken'])
-  return cleanRow({
-    id: String(getCell(row, ['id']) || uid()),
-    employee_no: String(getCell(row, ['employee no', 'employee number', 'clock no', 'clock number', 'staff no']) || '').trim(),
-    name: String(getCell(row, ['name', 'employee name', 'full name', 'person']) || '').trim(),
-    shift: String(getCell(row, ['shift', 'shift no', 'shift number']) || 'Shift 1').replace(/^1$/, 'Shift 1').replace(/^2$/, 'Shift 2').replace(/^3$/, 'Shift 3'),
-    section: String(getCell(row, ['section', 'department', 'area']) || 'Workshop').trim(),
-    role: String(getCell(row, ['role', 'position', 'job title', 'trade']) || 'Diesel Plant Fitter').trim(),
-    staff_group: String(getCell(row, ['staff group', 'group', 'level']) || '').trim(),
-    phone: String(getCell(row, ['phone', 'cell', 'mobile']) || '').trim(),
-    employment_status: String(getCell(row, ['status', 'employment status']) || 'Active').trim(),
-    leave_balance_days: one(leaveBalance || 30),
-    leave_taken_days: one(leaveTaken || 0),
-    leave_start: String(getCell(row, ['leave start', 'leave from', 'start date']) || '').trim(),
-    leave_end: String(getCell(row, ['leave end', 'leave to', 'end date']) || '').trim(),
-    leave_reason: String(getCell(row, ['leave reason', 'reason']) || '').trim(),
-    off_start: String(getCell(row, ['off start', 'off from']) || '').trim(),
-    off_end: String(getCell(row, ['off end', 'off to']) || '').trim(),
-    off_reason: String(getCell(row, ['off reason']) || '').trim(),
-    notes: String(getCell(row, ['notes', 'remarks']) || '').trim(),
-    created_at: nowIso(),
-    updated_at: nowIso()
+    fleet_no: getCell(row, ['fleet_no', 'fleet', 'machine']),
+    service_type: getCell(row, ['service_type', 'service type']) || '250hr service',
+    due_date: dateOnly(getCell(row, ['due_date', 'due date'])),
+    scheduled_hours: Number(getCell(row, ['scheduled_hours', 'due hours', 'hours']) || 0),
+    completed_hours: Number(getCell(row, ['completed_hours', 'done hours']) || 0),
+    job_card_no: getCell(row, ['job_card_no', 'job card']),
+    supervisor: getCell(row, ['supervisor']),
+    technician: getCell(row, ['technician', 'fitter']),
+    status: getCell(row, ['status']) || 'Due',
+    notes: getCell(row, ['notes'])
   })
 }
 
 function mapLeave(row: Row): Row {
-  const start = String(getCell(row, ['start date', 'leave start', 'from', 'leave from']) || '').trim()
-  const end = String(getCell(row, ['end date', 'leave end', 'to', 'leave to']) || '').trim()
-  const days = one(getCell(row, ['days', 'leave days']) || daysInclusive(start, end))
+  const start = dateOnly(getCell(row, ['start_date', 'leave_start', 'start']))
+  const end = dateOnly(getCell(row, ['end_date', 'leave_end', 'end']))
   return cleanRow({
     id: uid(),
-    employee_no: String(getCell(row, ['employee no', 'employee number', 'clock no', 'staff no']) || '').trim(),
-    person_name: String(getCell(row, ['name', 'employee name', 'full name', 'person']) || '').trim(),
-    shift: String(getCell(row, ['shift']) || '').trim(),
-    section: String(getCell(row, ['section', 'department', 'area']) || '').trim(),
-    role: String(getCell(row, ['role', 'position', 'trade']) || '').trim(),
-    leave_type: String(getCell(row, ['leave type', 'type']) || 'Annual Leave').trim(),
+    employee_no: getCell(row, ['employee_no', 'emp no']),
+    person_name: getCell(row, ['person_name', 'name', 'employee']),
+    shift: getCell(row, ['shift']) || 'Shift 1',
+    section: getCell(row, ['section']),
+    role: getCell(row, ['role']),
+    leave_type: getCell(row, ['leave_type', 'leave type']) || 'Annual Leave',
     start_date: start,
     end_date: end,
-    days,
-    reason: String(getCell(row, ['reason', 'notes']) || '').trim(),
-    status: String(getCell(row, ['status']) || 'Approved').trim(),
-    created_at: nowIso(),
-    updated_at: nowIso()
+    days: Number(getCell(row, ['days']) || daysInclusive(start, end)),
+    reason: getCell(row, ['reason']),
+    status: getCell(row, ['status']) || 'Approved'
   })
 }
 
-function SectionTitle({ title, subtitle }: { title: string; subtitle?: string }) {
+function SectionTitle({ title, subtitle, right }: { title: string; subtitle?: string; right?: any }) {
   return (
     <div className="section-title">
       <div>
         <h2>{title}</h2>
         {subtitle && <p>{subtitle}</p>}
       </div>
+      {right && <div className="section-actions">{right}</div>}
     </div>
   )
 }
 
-function StatCard({
-  label,
-  value,
-  note,
-  icon,
-  tone = 'default',
-  onClick
-}: {
-  label: string
-  value: any
-  note?: string
-  icon?: string
-  tone?: 'default' | 'orange' | 'blue' | 'green' | 'red' | 'grey'
-  onClick?: () => void
-}) {
-  const content = (
-    <>
-      <div className="stat-card-top">
-        <span>{label}</span>
-        {icon && <b className="stat-icon">{icon}</b>}
-      </div>
-      <strong>{value}</strong>
-      {note && <small>{note}</small>}
-      {onClick && <em>Click to open list</em>}
-    </>
+function Badge({ value }: { value: any }) {
+  return <span className={`badge ${statusClass(value)}`}>{String(value || 'Not set')}</span>
+}
+
+function StatCard({ title, value, detail, tone = 'blue', onClick }: { title: string; value: any; detail?: string; tone?: string; onClick?: () => void }) {
+  return (
+    <button type="button" className={`stat-card ${tone}`} onClick={onClick}>
+      <span>{title}</span>
+      <b>{value}</b>
+      {detail && <small>{detail}</small>}
+    </button>
   )
-
-  if (onClick) {
-    return (
-      <button type="button" className={`stat-card clickable ${tone}`} onClick={onClick}>
-        {content}
-      </button>
-    )
-  }
-
-  return <div className={`stat-card ${tone}`}>{content}</div>
 }
 
-function Badge({ value }: { value: string }) {
-  return <span className={`badge ${statusClass(value)}`}>{value || 'Open'}</span>
+function Field({ label, children }: { label: string; children?: any }) {
+  return <label className="field"><span>{label}</span>{children}</label>
 }
 
-function MiniTable({ rows, columns, empty }: { rows: Row[]; columns: { key: string; label: string }[]; empty?: string }) {
+function MiniTable({ rows, columns, empty, onRow }: { rows: Row[]; columns: { key: string; label: string; render?: (row: Row) => any }[]; empty?: string; onRow?: (row: Row) => void }) {
   if (!rows.length) return <div className="empty">{empty || 'No records yet.'}</div>
   return (
     <div className="table-wrap">
@@ -365,15 +345,24 @@ function MiniTable({ rows, columns, empty }: { rows: Row[]; columns: { key: stri
           <tr>{columns.map((col) => <th key={col.key}>{col.label}</th>)}</tr>
         </thead>
         <tbody>
-          {rows.map((row, i) => (
-            <tr key={row.id || i}>
-              {columns.map((col) => (
-                <td key={col.key}>{col.key === 'status' ? <Badge value={row[col.key]} /> : String(row[col.key] ?? '')}</td>
-              ))}
+          {rows.map((row) => (
+            <tr key={row.id || JSON.stringify(row)} onClick={() => onRow?.(row)} className={onRow ? 'clickable-row' : ''}>
+              {columns.map((col) => <td key={col.key}>{col.render ? col.render(row) : String(row[col.key] ?? '')}</td>)}
             </tr>
           ))}
         </tbody>
       </table>
+    </div>
+  )
+}
+
+function Modal({ title, children, onClose }: { title: string; children?: any; onClose: () => void }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-head"><h3>{title}</h3><button onClick={onClose}>Close</button></div>
+        <div className="modal-body">{children}</div>
+      </div>
     </div>
   )
 }
@@ -388,60 +377,29 @@ export default function Home() {
   const [queueCount, setQueueCount] = useState(0)
   const [message, setMessage] = useState('')
   const [search, setSearch] = useState('')
+  const [modal, setModal] = useState<{ title: string; body: any } | null>(null)
   const [reportFleet, setReportFleet] = useState('')
 
-  const [fleetForm, setFleetForm] = useState<Row>({ fleet_no: '', machine_type: '', make_model: '', department: '', location: '', hours: 0, status: 'Available', service_interval_hours: 250, last_service_hours: 0 })
-  const [breakdownForm, setBreakdownForm] = useState<Row>({ fleet_no: '', category: '', fault: '', reported_by: '', assigned_to: '', start_time: '', status: 'Open', cause: '', action_taken: '', delay_reason: '' })
+  const [fleetForm, setFleetForm] = useState<Row>({ fleet_no: '', machine_type: '', make_model: '', department: '', location: '', hours: 0, mileage: 0, status: 'Available', service_interval_hours: 250, last_service_hours: 0 })
+  const [breakdownForm, setBreakdownForm] = useState<Row>({ fleet_no: '', category: 'Mechanical', fault: '', reported_by: '', assigned_to: '', start_time: '', status: 'Open', spare_eta: '', expected_available_date: '', cause: '', action_taken: '', preventative_recommendation: '' })
   const [repairForm, setRepairForm] = useState<Row>({ fleet_no: '', job_card_no: '', fault: '', assigned_to: '', start_time: '', end_time: '', status: 'In progress', parts_used: '', notes: '' })
-  const [serviceForm, setServiceForm] = useState<Row>({ fleet_no: '', service_type: '250hr service', scheduled_hours: 0, due_date: '', status: 'Due', technician: '', notes: '' })
-  const [spareForm, setSpareForm] = useState<Row>({ part_no: '', description: '', section: '', machine_type: '', stock_qty: 0, min_qty: 1, supplier: '', lead_time_days: 0, order_status: 'In stock', notes: '' })
-  const [orderForm, setOrderForm] = useState<Row>({
-    request_date: today(),
-    machine_fleet_no: '',
-    machine_group: 'Yellow Machine',
-    workshop_section: 'Mechanical',
-    part_no: '',
-    description: '',
-    qty: 1,
-    spares_items: '',
-    requested_by: '',
-    priority: 'Normal',
-    status: 'Requested',
-    workflow_stage: 'Requested',
-    order_type: 'Not selected',
-    funding_status: 'Not funded',
-    eta: '',
-    notes: ''
-  })
-  const [partsBookForm, setPartsBookForm] = useState<Row>({ book_title: '', machine_group: 'Yellow Machine', machine_type: '', uploaded_by: '', file_name: '', extracted_part_numbers: '', extracted_text: '', notes: '' })
+  const [serviceForm, setServiceForm] = useState<Row>({ fleet_no: '', service_type: '250hr service', due_date: today(), scheduled_hours: 0, completed_date: '', completed_hours: 0, job_card_no: '', supervisor: '', technician: '', status: 'Due', notes: '' })
+  const [spareForm, setSpareForm] = useState<Row>({ part_no: '', description: '', section: 'Stores', machine_group: 'Yellow Machine', machine_type: '', stock_qty: 0, min_qty: 1, supplier: '', shelf_location: '', lead_time_days: 0, order_status: 'In stock' })
+  const [orderForm, setOrderForm] = useState<Row>({ request_date: today(), machine_fleet_no: '', machine_group: 'Yellow Machine', workshop_section: 'Mechanical', requested_by: '', part_no: '', description: '', qty: 1, spares_items: '', priority: 'Normal', workflow_stage: 'Requested', status: 'Requested', order_type: 'Not selected', funding_status: 'Not funded', eta: '', part_numbers: '', pdf_book_ref: '', notes: '' })
+  const [partsBookForm, setPartsBookForm] = useState<Row>({ book_title: '', machine_group: 'Yellow Machine', machine_type: '', uploaded_by: '', file_name: '', mime_type: '', file_size: 0, file_data: '', extracted_part_numbers: '', extracted_text: '', notes: '' })
   const [sparesSearch, setSparesSearch] = useState('')
   const [sparesStage, setSparesStage] = useState('All')
-  const [personForm, setPersonForm] = useState<Row>({
-    employee_no: '',
-    name: '',
-    shift: 'Shift 1',
-    section: 'Workshop',
-    role: 'Diesel Plant Fitter',
-    staff_group: 'Workshop Staff',
-    phone: '',
-    employment_status: 'Active',
-    leave_balance_days: 30,
-    leave_taken_days: 0,
-    leave_start: '',
-    leave_end: '',
-    leave_reason: '',
-    off_start: '',
-    off_end: '',
-    off_reason: ''
-  })
-  const [bulkPersonForm, setBulkPersonForm] = useState<Row>({ shift: 'Shift 1', section: 'Workshop', role: 'Diesel Plant Fitter', qty: 1 })
+  const [personForm, setPersonForm] = useState<Row>({ employee_no: '', name: '', shift: 'Shift 1', section: 'Workshop', role: 'Diesel Plant Fitter', staff_group: 'Workshop Staff', phone: '', employment_status: 'Active', leave_balance_days: 30, leave_taken_days: 0 })
   const [leaveForm, setLeaveForm] = useState<Row>({ person_name: '', employee_no: '', leave_type: 'Annual Leave', start_date: today(), end_date: today(), reason: '', status: 'Approved' })
-  const [personnelSearch, setPersonnelSearch] = useState('')
-  const [personnelShiftFilter, setPersonnelShiftFilter] = useState('All')
-  const [workForm, setWorkForm] = useState<Row>({ person_name: '', fleet_no: '', section: '', work_date: today(), hours_worked: 0, work_type: 'Repair', notes: '' })
-  const [tyreForm, setTyreForm] = useState<Row>({ serial_no: '', fleet_no: '', position: '', brand: '', size: '', fitment_date: today(), fitment_hours: 0, expected_life_hours: 5000, status: 'Fitted', notes: '' })
-  const [batteryForm, setBatteryForm] = useState<Row>({ serial_no: '', fleet_no: '', volts: '12V', cca: '', fitment_date: today(), warranty_end: '', expected_life_months: 18, status: 'Fitted', notes: '' })
+  const [bulkPersonForm, setBulkPersonForm] = useState<Row>({ shift: 'Shift 1', section: 'Workshop', role: 'Diesel Plant Fitter', qty: 1 })
+  const [workForm, setWorkForm] = useState<Row>({ person_name: '', fleet_no: '', section: 'Mechanical', work_date: today(), hours_worked: 0, work_type: 'Repair', notes: '' })
+  const [tyreForm, setTyreForm] = useState<Row>({ make: '', serial_no: '', company_no: '', production_date: '', fitted_date: today(), fleet_no: '', fitted_by: '', position: 'FL', tyre_type: '', size: '', fitment_hours: 0, fitment_mileage: 0, current_tread_mm: 0, measurement_due_date: '', stock_status: 'Fitted', status: 'Fitted', fitment_photo: '', notes: '' })
+  const [tyreMeasurementForm, setTyreMeasurementForm] = useState<Row>({ tyre_serial_no: '', fleet_no: '', position: '', measurement_date: today(), measured_by: '', tread_depth_mm: 0, pressure_psi: 0, condition: 'Good', notes: '' })
+  const [tyreOrderForm, setTyreOrderForm] = useState<Row>({ request_date: today(), fleet_no: '', tyre_type: '', size: '', qty: 1, requested_by: '', reason: '', priority: 'Normal', status: 'Requested', quote_status: 'Need Quote', eta: '', notes: '' })
+  const [batteryForm, setBatteryForm] = useState<Row>({ make: '', serial_no: '', production_date: '', fitment_date: today(), fleet_no: '', fitted_by: '', charging_voltage: '24V', volts: '12V', fitment_hours: 0, fitment_mileage: 0, maintenance_due_date: '', stock_status: 'Fitted', status: 'Fitted', fitment_photo: '', notes: '' })
+  const [batteryOrderForm, setBatteryOrderForm] = useState<Row>({ request_date: today(), fleet_no: '', battery_type: '', voltage: '12V', qty: 1, requested_by: '', reason: '', priority: 'Normal', status: 'Requested', eta: '', notes: '' })
   const [photoForm, setPhotoForm] = useState<Row>({ fleet_no: '', linked_type: 'Breakdown', caption: '', image_data: '' })
+  const [operationForm, setOperationForm] = useState<Row>({ operator_name: '', employee_no: '', machine_group: 'Truck', machine_type: 'Truck', fleet_no: '', shift: 'Shift 1', score: 100, offence: '', damage_report: '', supervisor: '', event_date: today(), photo_data: '', notes: '' })
 
   const isAdmin = session?.role === 'admin'
 
@@ -454,10 +412,7 @@ export default function Home() {
     if (snapshot) setData({ ...emptyData, ...snapshot })
     loadAll()
 
-    const up = () => {
-      setOnline(true)
-      syncOfflineQueue()
-    }
+    const up = () => { setOnline(true); syncOfflineQueue() }
     const down = () => setOnline(false)
     window.addEventListener('online', up)
     window.addEventListener('offline', down)
@@ -467,17 +422,15 @@ export default function Home() {
     }
   }, [])
 
-  useEffect(() => {
-    saveSnapshot(data)
-  }, [data])
+  useEffect(() => { saveSnapshot(data) }, [data])
 
   async function loadAll() {
     if (!supabase || !isSupabaseConfigured || (typeof navigator !== 'undefined' && !navigator.onLine)) return
     const next: AppData = { ...emptyData }
     for (const table of TABLES) {
       const orderCol = table === 'fleet_machines' ? 'fleet_no' : 'created_at'
-      const { data: rows, error } = await supabase.from(table).select('*').order(orderCol, { ascending: false })
-      if (!error && rows) next[table] = rows as Row[]
+      const { data: rows } = await supabase.from(table).select('*').order(orderCol, { ascending: false })
+      if (rows) next[table] = rows as Row[]
     }
     setData(next)
     saveSnapshot(next)
@@ -507,7 +460,7 @@ export default function Home() {
     setOfflineQueue(remaining)
     setQueueCount(remaining.length)
     await loadAll()
-    setMessage(remaining.length ? `${remaining.length} offline records still waiting to sync.` : 'Offline records synced successfully.')
+    setMessage(remaining.length ? `${remaining.length} records still waiting to sync.` : 'Offline records synced successfully.')
   }
 
   async function saveRow(table: TableName, row: Row, mode: 'insert' | 'upsert' = 'insert') {
@@ -527,20 +480,17 @@ export default function Home() {
       return
     }
 
-    if (mode === 'upsert') {
-      const { error } = await supabase.from(table).upsert(payload, { onConflict: table === 'fleet_machines' ? 'fleet_no' : 'id' })
-      if (error) {
-        addOfflineAction({ table, type: mode, payload })
-        setMessage(`Saved locally because Supabase rejected it: ${error.message}`)
-      } else setMessage('Saved online successfully.')
+    const request = mode === 'upsert'
+      ? supabase.from(table).upsert(payload, { onConflict: table === 'fleet_machines' ? 'fleet_no' : 'id' })
+      : supabase.from(table).insert(payload)
+    const { error } = await request
+    if (error) {
+      addOfflineAction({ table, type: mode, payload })
+      setQueueCount(getOfflineQueue().length)
+      setMessage(`Saved locally because Supabase rejected it: ${error.message}`)
     } else {
-      const { error } = await supabase.from(table).insert(payload)
-      if (error) {
-        addOfflineAction({ table, type: mode, payload })
-        setMessage(`Saved locally because Supabase rejected it: ${error.message}`)
-      } else setMessage('Saved online successfully.')
+      setMessage('Saved online successfully.')
     }
-    setQueueCount(getOfflineQueue().length)
   }
 
   async function deleteRow(table: TableName, id: string) {
@@ -581,1014 +531,397 @@ export default function Home() {
     const rows = await readExcelRows(file)
     const mapped = rows.map(mapService).filter((row) => row.fleet_no)
     for (const row of mapped) await saveRow('services', row, 'insert')
-    setMessage(`${mapped.length} service schedule records uploaded.`)
+    setMessage(`${mapped.length} service records uploaded.`)
   }
-
 
   async function uploadPersonnel(file?: File) {
     if (!file) return
     const rows = await readExcelRows(file)
-    let peopleCount = 0
-    let leaveCount = 0
-    const mappedPeople = rows.map(mapPersonnel).filter((row) => row.name)
-    for (const row of mappedPeople) {
-      await saveRow('personnel', row, 'upsert')
-      peopleCount++
-    }
-    const mappedLeave = rows.map(mapLeave).filter((row) => row.person_name && row.start_date && row.end_date)
-    for (const row of mappedLeave) {
-      await saveRow('leave_records', row, 'insert')
-      leaveCount++
-    }
-    setMessage(`${peopleCount} personnel records uploaded. ${leaveCount} leave/off schedule rows imported.`)
+    const people = rows.map(mapPersonnel).filter((row) => row.name)
+    const leave = rows.map(mapLeave).filter((row) => row.person_name && row.start_date)
+    for (const row of people) await saveRow('personnel', row, 'upsert')
+    for (const row of leave) await saveRow('leave_records', row, 'insert')
+    setMessage(`${people.length} personnel records and ${leave.length} leave records uploaded.`)
   }
 
-  function attachPhoto(file?: File) {
+  async function attachPhoto(file: File | undefined, setter: (value: string) => void) {
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => setPhotoForm((prev) => ({ ...prev, image_data: String(reader.result || ''), file_name: file.name }))
-    reader.readAsDataURL(file)
+    const dataUrl = await fileToDataUrl(file)
+    setter(dataUrl)
   }
 
-  function extractPartNumbers(text: string) {
-    const matches = String(text || '').match(/(?:[A-Z]{1,5}[-/ ]?)?\d{2,6}[-/][A-Z0-9]{1,8}(?:[-/][A-Z0-9]{1,8})?|\b[A-Z]{1,5}\d{3,8}[A-Z]{0,3}\b|\b[A-Z0-9]{3,8}-[A-Z0-9]{2,8}\b|\b\d{5,10}\b/g) || []
-    return Array.from(new Set(matches.map((m) => m.replace(/\s+/g, '').toUpperCase()).filter((m) => m.length >= 5))).slice(0, 160)
-  }
-
-  function attachPartsBook(file?: File) {
+  async function attachPartsBook(file?: File) {
     if (!file) return
-    const reader = new FileReader()
-    reader.onload = () => {
-      const buffer = reader.result as ArrayBuffer
-      const bytes = new Uint8Array(buffer)
-      let rawText = ''
-      try {
-        rawText = new TextDecoder('latin1').decode(bytes)
-      } catch {
-        rawText = Array.from(bytes.slice(0, 65000)).map((b) => String.fromCharCode(b)).join('')
-      }
-      const detected = extractPartNumbers(`${file.name} ${partsBookForm.notes || ''} ${rawText}`)
-      setPartsBookForm((prev) => ({
-        ...prev,
-        book_title: prev.book_title || file.name.replace(/\.pdf$/i, ''),
-        file_name: file.name,
-        file_size: file.size,
-        mime_type: file.type || 'application/pdf',
-        extracted_text: rawText.slice(0, 60000),
-        extracted_part_numbers: detected.join('\n'),
-        extracted_count: detected.length
-      }))
-      setMessage(`Parts book loaded. Found ${detected.length} possible part numbers. You can click a part number to add it to an order.`)
-    }
-    reader.readAsArrayBuffer(file)
-  }
-
-  function addPartToOrder(partNo: string, description = '') {
-    const cleanPart = String(partNo || '').trim().toUpperCase()
-    if (!cleanPart) return
-    setOrderForm((prev) => {
-      const line = `${cleanPart}${description ? ` - ${description}` : ''} - Qty 1`
-      const existing = String(prev.spares_items || '').trim()
-      return {
-        ...prev,
-        part_no: prev.part_no || cleanPart,
-        description: prev.description || description,
-        spares_items: existing ? `${existing}\n${line}` : line
-      }
-    })
-    setMessage(`${cleanPart} added to the spares request sheet.`)
-  }
-
-  function orderStage(order: Row) {
-    return String(order.workflow_stage || order.status || 'Requested')
-  }
-
-  function moveSpareOrder(order: Row, stage: string, extra: Row = {}) {
-    const next: Row = {
-      ...order,
-      ...extra,
-      workflow_stage: stage,
-      status: stage,
-      funding_status: stage === 'Funded' ? 'Funded' : order.funding_status || 'Not funded'
-    }
-    saveRow('spares_orders', next, 'upsert')
-  }
-
-  function askEtaAndMove(order: Row) {
-    const eta = window.prompt('Enter delivery ETA date, example 2026-05-20', dateOnly(order.eta) || today())
-    if (eta === null) return
-    moveSpareOrder(order, 'Awaiting Delivery', { eta })
-  }
-
-
-  function selectPersonForLeave(name: string) {
-    const person = data.personnel.find((p) => String(p.name || '').toLowerCase() === String(name || '').toLowerCase())
-    if (!person) return setLeaveForm((prev) => ({ ...prev, person_name: name }))
-    setLeaveForm((prev) => ({
+    const buffer = await file.arrayBuffer()
+    const dataUrl = await fileToDataUrl(file)
+    const rawText = arrayBufferToText(buffer)
+    const detected = extractPartNumbers(`${file.name} ${partsBookForm.notes || ''} ${rawText}`)
+    setPartsBookForm((prev) => ({
       ...prev,
-      person_name: person.name,
-      employee_no: person.employee_no || '',
-      shift: person.shift || '',
-      section: person.section || '',
-      role: person.role || ''
+      file_name: file.name,
+      mime_type: file.type || 'application/pdf',
+      file_size: file.size,
+      file_data: dataUrl,
+      extracted_part_numbers: detected.join('\n'),
+      extracted_count: detected.length,
+      extracted_text: rawText.slice(0, 7000)
     }))
+    setMessage(`${detected.length} possible part numbers found. You can still type or add part numbers manually.`)
+  }
+
+  function addPartToOrder(partNo: string) {
+    const current = String(orderForm.part_numbers || '')
+    const parts = new Set(current.split(/[\n,; ]+/).map((x) => x.trim()).filter(Boolean))
+    parts.add(partNo)
+    setOrderForm((prev) => ({ ...prev, part_numbers: Array.from(parts).join('\n'), part_no: prev.part_no || partNo }))
+    setMessage(`${partNo} added to order sheet.`)
   }
 
   async function saveLeaveRecord() {
-    const days = daysInclusive(leaveForm.start_date, leaveForm.end_date)
-    if (!leaveForm.person_name || !leaveForm.start_date || !leaveForm.end_date) return setMessage('Select employee and leave dates first.')
-    const leaveType = String(leaveForm.leave_type || 'Annual Leave')
-    const deductLeave = leaveType.toLowerCase().includes('annual') || leaveType.toLowerCase() === 'leave'
-    const record = cleanRow({
-      ...leaveForm,
-      id: uid(),
-      days,
-      status: leaveForm.status || 'Approved',
-      created_at: nowIso(),
-      updated_at: nowIso()
-    })
-    await saveRow('leave_records', record, 'insert')
-
-    const person = data.personnel.find((p) => String(p.name || '').toLowerCase() === String(leaveForm.person_name || '').toLowerCase() || (leaveForm.employee_no && p.employee_no === leaveForm.employee_no))
-    if (person) {
-      const nextBalance = deductLeave ? Math.max(0, n(person.leave_balance_days || 30) - days) : n(person.leave_balance_days || 30)
-      const nextTaken = deductLeave ? n(person.leave_taken_days || 0) + days : n(person.leave_taken_days || 0)
-      const isCurrent = isBetweenDates(leaveForm.start_date, leaveForm.end_date)
-      await saveRow('personnel', {
-        ...person,
-        employment_status: isCurrent ? (deductLeave ? 'On leave' : leaveType) : person.employment_status || 'Active',
-        leave_start: leaveForm.start_date,
-        leave_end: leaveForm.end_date,
-        leave_reason: `${leaveType}${leaveForm.reason ? ` - ${leaveForm.reason}` : ''}`,
-        leave_balance_days: one(nextBalance),
-        leave_taken_days: one(nextTaken)
-      }, 'upsert')
+    const days = Number(leaveForm.days || daysInclusive(leaveForm.start_date, leaveForm.end_date))
+    const payload = { ...leaveForm, days }
+    await saveRow('leave_records', payload)
+    const person = data.personnel.find((p) => String(p.name || '').toLowerCase() === String(leaveForm.person_name || '').toLowerCase() || String(p.employee_no || '') === String(leaveForm.employee_no || ''))
+    if (person && !String(leaveForm.leave_type || '').toLowerCase().includes('off')) {
+      await saveRow('personnel', { ...person, leave_taken_days: one(n(person.leave_taken_days) + days), leave_balance_days: one(n(person.leave_balance_days) - days), employment_status: isBetweenDates(leaveForm.start_date, leaveForm.end_date) ? 'On Leave' : person.employment_status }, 'upsert')
     }
-    setLeaveForm({ person_name: '', employee_no: '', leave_type: 'Annual Leave', start_date: today(), end_date: today(), reason: '', status: 'Approved' })
-    setMessage(`${leaveType} saved for ${record.person_name}. ${deductLeave ? `${days} leave days deducted.` : 'No annual leave deducted.'}`)
-  }
-
-  async function clearPersonStatus(person: Row) {
-    await saveRow('personnel', { ...person, employment_status: 'Active', leave_start: '', leave_end: '', leave_reason: '', off_start: '', off_end: '', off_reason: '' }, 'upsert')
-    setMessage(`${person.name} marked active.`)
   }
 
   async function addBulkPersonnel() {
-    const qty = Math.max(1, Math.min(100, Math.floor(n(bulkPersonForm.qty || 1))))
+    const qty = Math.max(1, Number(bulkPersonForm.qty || 1))
     for (let i = 1; i <= qty; i++) {
       await saveRow('personnel', {
-        id: uid(),
-        employee_no: '',
-        name: `Vacant ${bulkPersonForm.role} ${bulkPersonForm.shift} ${i}`,
+        employee_no: `VAC-${bulkPersonForm.shift}-${bulkPersonForm.role}-${i}-${Date.now()}`,
+        name: `Vacant ${bulkPersonForm.role} ${i}`,
         shift: bulkPersonForm.shift,
         section: bulkPersonForm.section,
         role: bulkPersonForm.role,
-        staff_group: String(bulkPersonForm.role || '').toLowerCase().includes('manager') ? 'Management' : 'Workshop Staff',
+        staff_group: bulkPersonForm.role === 'Manager' || bulkPersonForm.role === 'Foreman' ? 'Management' : 'Workshop Staff',
         employment_status: 'Vacant',
         leave_balance_days: 0,
         leave_taken_days: 0
-      }, 'insert')
+      })
     }
-    setMessage(`${qty} ${bulkPersonForm.role} slot(s) added to ${bulkPersonForm.shift}. Delete or rename them later when allocated.`)
   }
 
-  const filteredFleet = useMemo(() => {
-    const q = search.toLowerCase()
-    return data.fleet_machines.filter((m) => [m.fleet_no, m.machine_type, m.department, m.location, m.status].join(' ').toLowerCase().includes(q))
-  }, [data.fleet_machines, search])
+  function moveOrder(table: TableName, order: Row, status: string, extra: Row = {}) {
+    saveRow(table, { ...order, status, workflow_stage: status, ...extra }, 'upsert')
+  }
 
-  const openBreakdowns = data.breakdowns.filter((b) => !String(b.status || '').toLowerCase().includes('complete') && !String(b.status || '').toLowerCase().includes('closed'))
-  const repairsOpen = data.repairs.filter((r) => !String(r.status || '').toLowerCase().includes('complete') && !String(r.status || '').toLowerCase().includes('closed'))
-  const servicesDue = data.services.filter((s) => String(s.status || '').toLowerCase().includes('due') || n(s.scheduled_hours) <= n(data.fleet_machines.find((m) => m.fleet_no === s.fleet_no)?.hours))
+  function showPdfBook(book: Row) {
+    if (!book.file_data) {
+      setMessage('This parts book was indexed before PDF viewing was added. Upload it again to open diagrams inside the app.')
+      return
+    }
+    setModal({
+      title: book.book_title || book.file_name || 'Parts book',
+      body: (
+        <div className="pdf-modal-grid">
+          <div className="pdf-frame-wrap"><iframe src={book.file_data} title={book.book_title || 'Parts Book'} /></div>
+          <div className="pdf-side">
+            <h4>Extracted part numbers</h4>
+            <div className="part-chip-box tall">
+              {String(book.extracted_part_numbers || '').split(/[\n,; ]+/).map((p) => p.trim()).filter(Boolean).slice(0, 250).map((part) => (
+                <button key={part} className="part-chip" onClick={() => addPartToOrder(part)}>{part}</button>
+              ))}
+            </div>
+            <p className="muted">Click a part number to place it on the spares order sheet. Use the PDF diagram on the left to confirm item number and page.</p>
+          </div>
+        </div>
+      )
+    })
+  }
+
+  const openBreakdowns = data.breakdowns.filter((b) => !['closed', 'complete', 'available'].some((x) => String(b.status || '').toLowerCase().includes(x)))
+  const openRepairs = data.repairs.filter((r) => !['closed', 'complete'].some((x) => String(r.status || '').toLowerCase().includes(x)))
+  const servicesDue = data.services.filter((s) => !String(s.status || '').toLowerCase().includes('complete'))
+  const servicesToday = servicesDue.filter((s) => dateOnly(s.due_date) === today())
   const sparesLow = data.spares.filter((s) => n(s.stock_qty) <= n(s.min_qty))
-  const tyresDue = data.tyres.filter((t) => {
-    const machine = data.fleet_machines.find((m) => m.fleet_no === t.fleet_no)
-    return machine && n(machine.hours) >= n(t.fitment_hours) + n(t.expected_life_hours)
-  })
-  const batteriesDue = data.batteries.filter((b) => {
-    if (!b.fitment_date) return false
-    const fitted = new Date(b.fitment_date)
-    const due = new Date(fitted)
-    due.setMonth(due.getMonth() + n(b.expected_life_months || 18))
-    return new Date() >= due
-  })
-
-  const currentHour = new Date().getHours()
-  const currentShift = currentHour >= 6 && currentHour < 18 ? 'Day Shift' : 'Night Shift'
-  const currentShiftTime = currentHour >= 6 && currentHour < 18 ? '06:00 - 18:00' : '18:00 - 06:00'
-  const activePersonnel = data.personnel.filter((p) => String(p.employment_status || 'Active').toLowerCase().includes('active'))
-  const peopleOff = data.personnel.filter((p) => {
-    const status = String(p.employment_status || '').toLowerCase()
-    return status.includes('leave') || status.includes('off') || status.includes('sick') || isBetweenDates(p.leave_start, p.leave_end)
-  })
-  const foremenOnDuty = activePersonnel.filter((p) => {
-    const words = `${p.role || ''} ${p.section || ''}`.toLowerCase()
-    const isSupervisor = words.includes('foreman') || words.includes('chargehand') || words.includes('supervisor')
-    const isOff = peopleOff.some((off) => off.id === p.id)
-    return isSupervisor && !isOff
-  })
-
-  const managers = data.personnel.filter((p) => `${p.role || ''} ${p.staff_group || ''}`.toLowerCase().includes('manager'))
-  const foremenRegister = data.personnel.filter((p) => `${p.role || ''} ${p.staff_group || ''}`.toLowerCase().includes('foreman'))
-  const chargehandsRegister = data.personnel.filter((p) => `${p.role || ''}`.toLowerCase().includes('chargehand'))
-  const qPersonnel = personnelSearch.toLowerCase().trim()
-  const filteredPersonnel = data.personnel.filter((p) => {
-    const text = [p.employee_no, p.name, p.shift, p.section, p.role, p.staff_group, p.phone, p.employment_status].join(' ').toLowerCase()
-    const matchSearch = !qPersonnel || text.includes(qPersonnel)
-    const matchShift = personnelShiftFilter === 'All' || String(p.shift || '') === personnelShiftFilter
-    return matchSearch && matchShift
-  })
-  const currentLeave = data.leave_records.filter((l) => isBetweenDates(l.start_date, l.end_date) && !String(l.status || '').toLowerCase().includes('cancel'))
-  const upcomingLeave = data.leave_records.filter((l) => isFutureDate(l.start_date) && !String(l.status || '').toLowerCase().includes('cancel'))
+  const awaitingFunding = data.spares_orders.filter((o) => String(o.workflow_stage || o.status || '').toLowerCase().includes('awaiting funding'))
+  const batteryRequests = data.battery_orders.filter((o) => !['delivered', 'closed', 'cancelled'].some((x) => String(o.status || '').toLowerCase().includes(x)))
+  const tyreRequests = data.tyre_orders.filter((o) => !['delivered', 'closed', 'cancelled'].some((x) => String(o.status || '').toLowerCase().includes(x)))
+  const currentLeave = data.leave_records.filter((l) => isBetweenDates(l.start_date, l.end_date))
+  const upcomingLeave = data.leave_records.filter((l) => isFutureDate(l.start_date))
   const pastLeave = data.leave_records.filter((l) => isPastDate(l.end_date))
-  const offSchedule = data.leave_records.filter((l) => ['sick', 'off', 'awol', 'training', 'unpaid'].some((word) => String(l.leave_type || '').toLowerCase().includes(word)))
-  const servicesToday = data.services.filter((s) => dateOnly(s.due_date) === today() && !String(s.status || '').toLowerCase().includes('complete'))
-  const machinesOnBreakdown = uniqueByFleet(openBreakdowns)
-  const machinesBeingWorkedOn = uniqueByFleet([
-    ...repairsOpen,
-    ...openBreakdowns.filter((b) => String(b.status || '').toLowerCase().includes('progress') || String(b.assigned_to || '').trim())
-  ])
-  const openSpareOrders = data.spares_orders.filter((o) => !['complete', 'closed', 'received', 'cancelled'].some((x) => String(o.status || '').toLowerCase().includes(x)))
-  const sparesDueThisWeek = [...sparesLow, ...openSpareOrders]
-  const sparesQuery = sparesSearch.toLowerCase().trim()
+  const activePersonnel = data.personnel.filter((p) => String(p.employment_status || '').toLowerCase().includes('active'))
+  const peopleOff = data.personnel.filter((p) => String(p.employment_status || '').toLowerCase().includes('leave') || String(p.employment_status || '').toLowerCase().includes('off') || currentLeave.some((l) => l.person_name === p.name))
+  const foremenOnDuty = data.personnel.filter((p) => ['foreman', 'chargehand'].some((x) => String(p.role || '').toLowerCase().includes(x)) && !peopleOff.some((off) => off.id === p.id))
+  const currentShift = activePersonnel.reduce((acc: Record<string, number>, p) => { acc[p.shift || 'Shift 1'] = (acc[p.shift || 'Shift 1'] || 0) + 1; return acc }, {})
+  const partsInBooks = Array.from(new Set(data.parts_books.flatMap((b) => String(b.extracted_part_numbers || '').split(/[\n,; ]+/).map((x) => x.trim()).filter(Boolean)))).slice(0, 150)
+  const filteredFleet = data.fleet_machines.filter((r) => !search || [r.fleet_no, r.machine_type, r.department, r.location, r.status].join(' ').toLowerCase().includes(search.toLowerCase()))
   const filteredSpareOrders = data.spares_orders.filter((o) => {
-    const text = [o.machine_fleet_no, o.part_no, o.description, o.spares_items, o.requested_by, o.machine_group, o.workshop_section, o.order_type, o.status, o.workflow_stage, o.eta].join(' ').toLowerCase()
-    const matchesSearch = !sparesQuery || text.includes(sparesQuery)
-    const matchesStage = sparesStage === 'All' || orderStage(o) === sparesStage || String(o.order_type || '') === sparesStage || String(o.machine_group || '') === sparesStage
-    return matchesSearch && matchesStage
+    const text = [o.machine_fleet_no, o.part_no, o.description, o.spares_items, o.requested_by, o.workflow_stage, o.status, o.order_type, o.machine_group].join(' ').toLowerCase()
+    const qOk = !sparesSearch || text.includes(sparesSearch.toLowerCase())
+    const sOk = sparesStage === 'All' || String(o.workflow_stage || o.status || '') === sparesStage || String(o.order_type || '') === sparesStage || String(o.machine_group || '') === sparesStage
+    return qOk && sOk
   })
-  const requestedOrders = filteredSpareOrders.filter((o) => orderStage(o) === 'Requested')
-  const awaitingFundingOrders = filteredSpareOrders.filter((o) => orderStage(o) === 'Awaiting Funding')
-  const fundedOrders = filteredSpareOrders.filter((o) => orderStage(o) === 'Funded')
-  const awaitingDeliveryOrders = filteredSpareOrders.filter((o) => orderStage(o) === 'Awaiting Delivery')
-  const localOrders = filteredSpareOrders.filter((o) => String(o.order_type || '').toLowerCase().includes('local'))
-  const internationalOrders = filteredSpareOrders.filter((o) => String(o.order_type || '').toLowerCase().includes('international'))
-  const truckOrders = filteredSpareOrders.filter((o) => String(o.machine_group || '').toLowerCase().includes('truck'))
-  const yellowMachineOrders = filteredSpareOrders.filter((o) => String(o.machine_group || '').toLowerCase().includes('yellow'))
-  const extractedBookParts = Array.from(new Set((data.parts_books || []).flatMap((b) => String(b.extracted_part_numbers || '').split(/[\n,; ]+/).map((x) => x.trim()).filter(Boolean)))).slice(0, 120)
-  const currentBookParts = String(partsBookForm.extracted_part_numbers || '').split(/[\n,; ]+/).map((x) => x.trim()).filter(Boolean).slice(0, 120)
-
-  const reportRows = useMemo(() => {
-    const fleet = reportFleet.trim().toLowerCase()
-    const match = (row: Row) => !fleet || String(row.fleet_no || '').toLowerCase().includes(fleet)
-    return {
-      breakdowns: data.breakdowns.filter(match),
-      repairs: data.repairs.filter(match),
-      services: data.services.filter(match),
-      tyres: data.tyres.filter(match),
-      batteries: data.batteries.filter(match),
-      work: data.work_logs.filter(match),
-      leave: data.leave_records.filter((row) => !fleet || String(row.person_name || '').toLowerCase().includes(fleet) || String(row.employee_no || '').toLowerCase().includes(fleet))
-    }
-  }, [data, reportFleet])
-
-
-  function renderShiftPanel(shiftName: string) {
-    const shiftPeople = filteredPersonnel.filter((p) => String(p.shift || 'Shift 1') === shiftName)
-    const activeShift = shiftPeople.filter((p) => String(p.employment_status || '').toLowerCase().includes('active'))
-    return (
-      <div className="shift-panel" key={shiftName}>
-        <div className="shift-head">
-          <div>
-            <h3>{shiftName}</h3>
-            <p>{activeShift.length} active · {shiftPeople.length} total people/slots</p>
-          </div>
-          <Badge value={shiftName} />
-        </div>
-        <div className="role-count-grid">
-          {workshopRoles.map((role) => {
-            const people = shiftPeople.filter((p) => String(p.role || '').toLowerCase() === role.toLowerCase())
-            return (
-              <button type="button" key={role} className="role-count" onClick={() => { setPersonnelSearch(role); setPersonnelShiftFilter(shiftName) }}>
-                <span>{role}</span>
-                <b>{people.length}</b>
-              </button>
-            )
-          })}
-        </div>
-        <MiniTable rows={shiftPeople.slice(0, 12)} columns={[{ key: 'employee_no', label: 'Emp No' }, { key: 'name', label: 'Name' }, { key: 'role', label: 'Role' }, { key: 'section', label: 'Section' }, { key: 'employment_status', label: 'Status' }, { key: 'leave_balance_days', label: 'Leave Bal' }]} empty={`No people loaded for ${shiftName}.`} />
-      </div>
-    )
+  const departmentReport = useMemo(() => {
+    const groups: Record<string, { total: number; breakdowns: number; services: number }> = {}
+    data.fleet_machines.forEach((m) => {
+      const dep = m.department || 'Unallocated'
+      groups[dep] ||= { total: 0, breakdowns: 0, services: 0 }
+      groups[dep].total += 1
+      groups[dep].breakdowns += openBreakdowns.some((b) => b.fleet_no === m.fleet_no) ? 1 : 0
+      groups[dep].services += servicesDue.some((s) => s.fleet_no === m.fleet_no) ? 1 : 0
+    })
+    return Object.entries(groups).map(([department, vals]) => ({ id: department, department, ...vals, availability: vals.total ? one(((vals.total - vals.breakdowns) / vals.total) * 100) : 0 }))
+  }, [data, openBreakdowns, servicesDue])
+  const typeReport = useMemo(() => {
+    const groups: Record<string, { total: number; breakdowns: number }> = {}
+    data.fleet_machines.forEach((m) => {
+      const type = m.machine_type || 'Unknown'
+      groups[type] ||= { total: 0, breakdowns: 0 }
+      groups[type].total += 1
+      groups[type].breakdowns += openBreakdowns.some((b) => b.fleet_no === m.fleet_no) ? 1 : 0
+    })
+    return Object.entries(groups).map(([machine_type, vals]) => ({ id: machine_type, machine_type, ...vals, availability: vals.total ? one(((vals.total - vals.breakdowns) / vals.total) * 100) : 0 }))
+  }, [data, openBreakdowns])
+  const repeatedFaults = useMemo(() => {
+    const counts: Record<string, number> = {}
+    data.breakdowns.forEach((b) => {
+      const key = `${b.fleet_no || 'NO FLEET'} · ${b.category || b.fault || 'Fault'}`
+      counts[key] = (counts[key] || 0) + 1
+    })
+    return Object.entries(counts).filter(([, count]) => count > 1).map(([fault, count]) => ({ id: fault, fault, count, recommendation: 'Check root cause and add preventative maintenance task.' }))
+  }, [data.breakdowns])
+  const reportRows = {
+    breakdowns: data.breakdowns.filter((r) => !reportFleet || String(r.fleet_no || '').toLowerCase().includes(reportFleet.toLowerCase())),
+    services: data.services.filter((r) => !reportFleet || String(r.fleet_no || '').toLowerCase().includes(reportFleet.toLowerCase())),
+    tyres: data.tyres.filter((r) => !reportFleet || String(r.fleet_no || '').toLowerCase().includes(reportFleet.toLowerCase())),
+    batteries: data.batteries.filter((r) => !reportFleet || String(r.fleet_no || '').toLowerCase().includes(reportFleet.toLowerCase()))
   }
 
-  function renderOrderCards(rows: Row[], empty = 'No spares in this section yet.') {
-    if (!rows.length) return <div className="empty">{empty}</div>
-    return (
-      <div className="order-card-list">
-        {rows.map((order) => (
-          <div className="spares-order-card" key={order.id}>
-            <div className="order-card-head">
-              <div>
-                <b>{order.machine_fleet_no || 'No fleet'}</b>
-                <span>{dateOnly(order.request_date || order.created_at) || today()} · {order.requested_by || 'Requester not set'}</span>
-              </div>
-              <Badge value={orderStage(order)} />
-            </div>
-            <div className="order-meta-grid">
-              <span><b>Group:</b> {order.machine_group || 'Not set'}</span>
-              <span><b>Section:</b> {order.workshop_section || 'Not set'}</span>
-              <span><b>Priority:</b> {order.priority || 'Normal'}</span>
-              <span><b>Order:</b> {order.order_type || 'Not selected'}</span>
-              <span><b>Funding:</b> {order.funding_status || 'Not funded'}</span>
-              <span><b>ETA:</b> {dateOnly(order.eta) || 'No ETA'}</span>
-            </div>
-            <div className="order-lines">
-              <b>{order.part_no || 'Parts request'}</b>
-              {order.description && <p>{order.description}</p>}
-              {order.spares_items && <pre>{order.spares_items}</pre>}
-              {order.notes && <small>{order.notes}</small>}
-            </div>
-            <div className="order-actions">
-              <button onClick={() => moveSpareOrder(order, 'Awaiting Funding')}>Move to awaiting funding</button>
-              <button onClick={() => moveSpareOrder(order, 'Funded', { funded_date: today(), funding_status: 'Funded' })}>Mark funded</button>
-              <button onClick={() => askEtaAndMove(order)}>Awaiting delivery + ETA</button>
-              <button onClick={() => moveSpareOrder(order, orderStage(order), { order_type: 'Local Order', supplier_type: 'Local' })}>Local order</button>
-              <button onClick={() => moveSpareOrder(order, orderStage(order), { order_type: 'International Order', supplier_type: 'International' })}>International order</button>
-              <button onClick={() => moveSpareOrder(order, 'Delivered', { delivered_date: today() })}>Delivered</button>
-            </div>
-          </div>
-        ))}
+  function renderSparesOrderCards(rows: Row[]) {
+    if (!rows.length) return <div className="empty">No orders in this section yet.</div>
+    return <div className="kanban-cards">{rows.map((order) => (
+      <div className="kanban-card" key={order.id}>
+        <div className="card-row"><b>{order.machine_fleet_no || 'No fleet'}</b><Badge value={order.workflow_stage || order.status} /></div>
+        <p>{order.part_no || 'Parts request'} · Qty {order.qty || 1}</p>
+        {order.description && <small>{order.description}</small>}
+        {order.spares_items && <pre>{order.spares_items}</pre>}
+        <div className="meta-grid compact">
+          <span>By: {order.requested_by || '-'}</span><span>Area: {order.machine_group || '-'}</span><span>ETA: {dateOnly(order.eta) || '-'}</span><span>{order.order_type || 'No order type'}</span>
+        </div>
+        <div className="button-row wrap">
+          <button onClick={() => moveOrder('spares_orders', order, 'Awaiting Funding', { funding_status: 'Awaiting Funding' })}>Awaiting funding</button>
+          <button onClick={() => moveOrder('spares_orders', order, 'Funded', { funding_status: 'Funded', funded_date: today() })}>Funded</button>
+          <button onClick={() => { const eta = prompt('Delivery ETA date YYYY-MM-DD', dateOnly(order.eta) || today()); if (eta) moveOrder('spares_orders', order, 'Awaiting Delivery', { eta, workflow_stage: 'Awaiting Delivery' }) }}>Delivery ETA</button>
+          <button onClick={() => moveOrder('spares_orders', order, order.workflow_stage || 'Requested', { order_type: 'Local Order' })}>Local</button>
+          <button onClick={() => moveOrder('spares_orders', order, order.workflow_stage || 'Requested', { order_type: 'International Order' })}>International</button>
+          <button onClick={() => moveOrder('spares_orders', order, 'Delivered', { delivered_date: today() })}>Delivered</button>
+        </div>
       </div>
-    )
+    ))}</div>
+  }
+
+  function renderPersonnelShift(shift: string) {
+    const people = data.personnel.filter((p) => String(p.shift || 'Shift 1') === shift)
+    return <details className="drop-panel" open={shift === 'Shift 1'} key={shift}>
+      <summary><span>{shift}</span><Badge value={`${people.length} people / slots`} /></summary>
+      <div className="role-count-grid">
+        {personnelRoles.map((role) => <button key={role} type="button"><span>{role}</span><b>{people.filter((p) => String(p.role || '') === role).length}</b></button>)}
+      </div>
+      <MiniTable rows={people} columns={[{ key: 'employee_no', label: 'Emp No' }, { key: 'name', label: 'Name' }, { key: 'role', label: 'Role' }, { key: 'section', label: 'Section' }, { key: 'employment_status', label: 'Status', render: (r) => <Badge value={r.employment_status} /> }, { key: 'leave_balance_days', label: 'Leave Bal' }]} empty={`No people in ${shift}.`} />
+    </details>
   }
 
   if (!session) {
-    return (
-      <main className="login-shell">
-        <div className="login-card">
-          <div className="brand-mark">TE</div>
-          <h1>Turbo Energy Workshop Control</h1>
-          <p>Fleet register, breakdowns, repairs, services, spares, tyres, batteries, personnel and records.</p>
-          <label>Username</label>
-          <input value={loginName} onChange={(e) => setLoginName(e.target.value)} />
-          <label>Password</label>
-          <input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} />
-          <button className="primary" onClick={handleLogin}>Sign in</button>
-          <div className="login-help">
-            <b>Starter logins:</b><br />
-            admin / admin123<br />
-            admin workshop / workshop123<br />
-            foreman / foreman123<br />
-            user / user123
-          </div>
-          {message && <div className="message">{message}</div>}
-        </div>
-      </main>
-    )
+    return <main className="login-shell">
+      <div className="login-card glass">
+        <div className="brand-mark">TE</div>
+        <h1>Turbo Energy Workshop Control</h1>
+        <p>Dark control system for fleet, breakdowns, spares, tyres, batteries, personnel, operations and reports.</p>
+        <Field label="Username"><input value={loginName} onChange={(e) => setLoginName(e.target.value)} /></Field>
+        <Field label="Password"><input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} /></Field>
+        <button className="primary wide" onClick={handleLogin}>Sign in</button>
+        <div className="login-help">admin / admin123 · admin workshop / workshop123 · foreman / foreman123 · user / user123</div>
+        {message && <div className="message">{message}</div>}
+      </div>
+    </main>
   }
 
-  return (
-    <main className="app-shell">
+  return <main className="app-shell">
+    <aside className="sidebar">
+      <div className="logo-block"><div className="brand-mark small">TE</div><div><b>Turbo Energy</b><span>Workshop Control</span></div></div>
+      <nav>{nav.map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}</nav>
+      <div className="sync-box"><Badge value={online ? 'Online' : 'Offline'} /><span>Queue: {queueCount}</span><button onClick={syncOfflineQueue}>Sync</button></div>
+    </aside>
+
+    <section className="workspace">
       <header className="topbar">
-        <div className="brand">
-          <div className="brand-mark small">TE</div>
-          <div>
-            <h1>Turbo Energy Workshop Control</h1>
-            <p>Live and offline workshop tracking system</p>
-          </div>
-        </div>
-        <div className="status-strip">
-          <span className={online ? 'dot online' : 'dot offline'}></span>
-          {online ? 'Online' : 'Offline'}
-          <span>Queue: {queueCount}</span>
-          <span>{session.username} ({session.role})</span>
-          <button className="ghost" onClick={logout}>Logout</button>
-        </div>
+        <div><h1>{nav.find((x) => x[0] === tab)?.[1]}</h1><p>{today()} · Logged in as {session.username}</p></div>
+        <div className="top-actions"><button onClick={() => loadAll()}>Refresh</button><button onClick={() => window.print()}>Print</button><button className="danger-btn" onClick={logout}>Logout</button></div>
       </header>
+      {message && <div className="message floating">{message}</div>}
 
-      <nav className="tabs">
-        {nav.map(([key, label]) => (
-          <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>
-        ))}
-      </nav>
+      {tab === 'dashboard' && <div className="page-grid">
+        <SectionTitle title="Workshop control room" subtitle="Click any card to open the live list behind it." />
+        <div className="stats-grid">
+          <StatCard title="Total Fleet" value={data.fleet_machines.length} detail="machines registered" onClick={() => setTab('fleet')} />
+          <StatCard title="Current Shift Working" value={Object.entries(currentShift).map(([s, c]) => `${s}: ${c}`).join(' · ') || 'No shift loaded'} detail={`${activePersonnel.length} active people`} tone="green" onClick={() => setTab('personnel')} />
+          <StatCard title="People Off" value={peopleOff.length} detail="leave/off schedule" tone="orange" onClick={() => setTab('personnel')} />
+          <StatCard title="Foremen On Duty" value={foremenOnDuty.length} detail="foremen + chargehands" tone="blue" onClick={() => setTab('personnel')} />
+          <StatCard title="Service Today" value={servicesToday.length} detail="machines due today" tone="purple" onClick={() => setTab('services')} />
+          <StatCard title="Breakdowns" value={uniqueBy(openBreakdowns, 'fleet_no').length} detail="machines down" tone="red" onClick={() => setTab('breakdowns')} />
+          <StatCard title="Being Worked On" value={uniqueBy([...openRepairs, ...openBreakdowns], 'fleet_no').length} detail="repair/breakdown activity" tone="orange" onClick={() => setTab('repairs')} />
+          <StatCard title="Admin Requests" value={awaitingFunding.length + tyreRequests.length + batteryRequests.length} detail="spares/tyres/batteries" tone="red" onClick={() => setTab('spares')} />
+        </div>
+        <div className="grid-2">
+          <div className="card"><h3>Machines on breakdown</h3><MiniTable rows={openBreakdowns.slice(0, 8)} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'category', label: 'Fault Type' }, { key: 'assigned_to', label: 'Worked By' }, { key: 'spare_eta', label: 'Spares ETA' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} empty="No active breakdowns." /></div>
+          <div className="card"><h3>Machines on service today</h3><MiniTable rows={servicesToday.slice(0, 8)} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'supervisor', label: 'Supervisor' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} empty="No services due today." /></div>
+          <div className="card"><h3>Foremen / chargehands on duty</h3><MiniTable rows={foremenOnDuty.slice(0, 10)} columns={[{ key: 'name', label: 'Name' }, { key: 'shift', label: 'Shift' }, { key: 'role', label: 'Role' }, { key: 'section', label: 'Section' }]} empty="No foremen loaded yet." /></div>
+          <div className="card"><h3>People off / leave</h3><MiniTable rows={currentLeave.slice(0, 10)} columns={[{ key: 'person_name', label: 'Name' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'Start' }, { key: 'end_date', label: 'End' }, { key: 'days', label: 'Days' }]} empty="No current leave records." /></div>
+        </div>
+      </div>}
 
-      {message && <div className="message">{message}</div>}
+      {tab === 'fleet' && <div className="page-grid">
+        <SectionTitle title="Fleet register" subtitle="Upload fleet register or add machines manually." right={<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadFleet(e.target.files?.[0])} />} />
+        <div className="card form-card"><div className="form-grid">
+          <Field label="Fleet number"><input value={fleetForm.fleet_no} onChange={(e) => setFleetForm({ ...fleetForm, fleet_no: e.target.value })} /></Field>
+          <Field label="Machine type"><input value={fleetForm.machine_type} onChange={(e) => setFleetForm({ ...fleetForm, machine_type: e.target.value })} /></Field>
+          <Field label="Make/model"><input value={fleetForm.make_model} onChange={(e) => setFleetForm({ ...fleetForm, make_model: e.target.value })} /></Field>
+          <Field label="Department"><input value={fleetForm.department} onChange={(e) => setFleetForm({ ...fleetForm, department: e.target.value })} /></Field>
+          <Field label="Location"><input value={fleetForm.location} onChange={(e) => setFleetForm({ ...fleetForm, location: e.target.value })} /></Field>
+          <Field label="Hours"><input type="number" value={fleetForm.hours} onChange={(e) => setFleetForm({ ...fleetForm, hours: Number(e.target.value) })} /></Field>
+          <Field label="Mileage"><input type="number" value={fleetForm.mileage} onChange={(e) => setFleetForm({ ...fleetForm, mileage: Number(e.target.value) })} /></Field>
+          <Field label="Status"><select value={fleetForm.status} onChange={(e) => setFleetForm({ ...fleetForm, status: e.target.value })}><option>Available</option><option>Breakdown</option><option>Service</option><option>Major Repair</option></select></Field>
+        </div><button className="primary" onClick={() => saveRow('fleet_machines', fleetForm, 'upsert')}>Save machine</button></div>
+        <div className="card"><div className="card-head"><h3>Fleet list</h3><input placeholder="Search fleet..." value={search} onChange={(e) => setSearch(e.target.value)} /></div><MiniTable rows={filteredFleet} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'machine_type', label: 'Type' }, { key: 'make_model', label: 'Model' }, { key: 'department', label: 'Department' }, { key: 'hours', label: 'Hours' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></div>
+      </div>}
 
-      {tab === 'dashboard' && (
-        <section className="panel dashboard-panel">
-          <div className="dashboard-hero">
-            <div>
-              <p className="eyebrow">Live workshop control room</p>
-              <h2>Workshop Dashboard</h2>
-              <p>Shift, foremen, breakdowns, service work and spares pressure in one view.</p>
-            </div>
-            <div className="shift-card">
-              <span>Current shift working</span>
-              <strong>{currentShift}</strong>
-              <small>{currentShiftTime}</small>
-            </div>
+      {tab === 'spares' && <div className="page-grid spares-page">
+        <SectionTitle title="Spares & Orders dark control" subtitle="Request spares, move orders through funding, local/international order and delivery ETA, and open PDF parts books with diagrams." />
+        <div className="stats-grid mini"><StatCard title="Requests" value={data.spares_orders.filter((o) => String(o.workflow_stage || o.status) === 'Requested').length} onClick={() => setSparesStage('Requested')} /><StatCard title="Awaiting Funding" value={awaitingFunding.length} tone="red" onClick={() => setSparesStage('Awaiting Funding')} /><StatCard title="Awaiting Delivery" value={data.spares_orders.filter((o) => String(o.workflow_stage || '').includes('Delivery')).length} tone="orange" onClick={() => setSparesStage('Awaiting Delivery')} /><StatCard title="Low Stock" value={sparesLow.length} tone="red" /></div>
+        <div className="grid-2">
+          <div className="card form-card accent-card"><h3>New spares request sheet</h3><div className="form-grid">
+            <Field label="Fleet number"><input list="fleetList" value={orderForm.machine_fleet_no} onChange={(e) => setOrderForm({ ...orderForm, machine_fleet_no: e.target.value })} /></Field>
+            <Field label="Date"><input type="date" value={dateOnly(orderForm.request_date)} onChange={(e) => setOrderForm({ ...orderForm, request_date: e.target.value })} /></Field>
+            <Field label="Requested by"><input value={orderForm.requested_by} onChange={(e) => setOrderForm({ ...orderForm, requested_by: e.target.value })} /></Field>
+            <Field label="Machine area"><select value={orderForm.machine_group} onChange={(e) => setOrderForm({ ...orderForm, machine_group: e.target.value })}>{machineGroups.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Workshop section"><select value={orderForm.workshop_section} onChange={(e) => setOrderForm({ ...orderForm, workshop_section: e.target.value })}>{workshopSections.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Priority"><select value={orderForm.priority} onChange={(e) => setOrderForm({ ...orderForm, priority: e.target.value })}>{priorities.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Part number"><input value={orderForm.part_no} onChange={(e) => setOrderForm({ ...orderForm, part_no: e.target.value })} /></Field>
+            <Field label="Qty"><input type="number" value={orderForm.qty} onChange={(e) => setOrderForm({ ...orderForm, qty: Number(e.target.value) })} /></Field>
+            <Field label="Order type"><select value={orderForm.order_type} onChange={(e) => setOrderForm({ ...orderForm, order_type: e.target.value })}>{orderTypes.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="ETA"><input type="date" value={dateOnly(orderForm.eta)} onChange={(e) => setOrderForm({ ...orderForm, eta: e.target.value })} /></Field>
           </div>
-
-          <div className="stats-grid dashboard-stats">
-            <StatCard label="Total Fleet" value={data.fleet_machines.length} note="Machines in register" icon="🚜" tone="blue" onClick={() => setTab('fleet')} />
-            <StatCard label="Available / Online" value={data.fleet_machines.filter((m) => ['available', 'online'].some((x) => String(m.status || '').toLowerCase().includes(x))).length} note="Current active units" icon="✅" tone="green" onClick={() => setTab('fleet')} />
-            <StatCard label="People Off" value={peopleOff.length} note="Leave / sick / off duty" icon="👷" tone="grey" onClick={() => setTab('personnel')} />
-            <StatCard label="Foremen On Duty" value={foremenOnDuty.length} note="Foremen / chargehands active" icon="🧑‍🏭" tone="orange" onClick={() => setTab('personnel')} />
-            <StatCard label="Machines On Breakdown" value={machinesOnBreakdown.length} note="Open breakdown records" icon="⚠️" tone="red" onClick={() => setTab('breakdowns')} />
-            <StatCard label="Machines Being Worked On" value={machinesBeingWorkedOn.length} note="Repairs or assigned jobs" icon="🔧" tone="orange" onClick={() => setTab('repairs')} />
-            <StatCard label="Service Today" value={servicesToday.length} note="Machines due today" icon="🗓️" tone="blue" onClick={() => setTab('services')} />
-            <StatCard label="Spares Due This Week" value={sparesDueThisWeek.length} note="Low stock / open orders" icon="📦" tone="grey" onClick={() => setTab('spares')} />
+          <Field label="Description"><input value={orderForm.description} onChange={(e) => setOrderForm({ ...orderForm, description: e.target.value })} /></Field>
+          <Field label="Spares list / parts needed"><textarea rows={5} value={orderForm.spares_items} onChange={(e) => setOrderForm({ ...orderForm, spares_items: e.target.value })} /></Field>
+          <Field label="Part numbers from book"><textarea rows={3} value={orderForm.part_numbers} onChange={(e) => setOrderForm({ ...orderForm, part_numbers: e.target.value })} /></Field>
+          <button className="primary" onClick={() => saveRow('spares_orders', orderForm)}>Save spares request + notify admin</button>
           </div>
-
-          <div className="dashboard-layout">
-            <div className="dashboard-card wide">
-              <div className="card-head">
-                <div>
-                  <h3>Machines on breakdown / under repair</h3>
-                  <p>Click the button to open the full breakdown or repair list.</p>
-                </div>
-                <button className="mini-action" onClick={() => setTab('breakdowns')}>Open breakdowns</button>
-              </div>
-              <MiniTable rows={[...openBreakdowns, ...repairsOpen].slice(0, 10)} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'status', label: 'Status' }]} />
-            </div>
-
-            <div className="dashboard-card">
-              <div className="card-head">
-                <div>
-                  <h3>Machines on service today</h3>
-                  <p>From uploaded service schedule.</p>
-                </div>
-                <button className="mini-action" onClick={() => setTab('services')}>Open services</button>
-              </div>
-              <MiniTable rows={servicesToday.slice(0, 8)} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'technician', label: 'Technician' }, { key: 'status', label: 'Status' }]} empty="No machines scheduled for service today." />
-            </div>
-
-            <div className="dashboard-card">
-              <div className="card-head">
-                <div>
-                  <h3>Foremen on duty</h3>
-                  <p>Active foremen, chargehands and supervisors.</p>
-                </div>
-                <button className="mini-action" onClick={() => setTab('personnel')}>Open personnel</button>
-              </div>
-              <div className="people-list">
-                {foremenOnDuty.slice(0, 8).map((p) => (
-                  <button key={p.id} onClick={() => setTab('personnel')}>
-                    <b>{p.name}</b>
-                    <span>{p.role || 'Foreman'} · {p.section || 'Workshop'}</span>
-                  </button>
-                ))}
-                {!foremenOnDuty.length && <div className="empty blue-empty">No foremen loaded as on duty yet.</div>}
-              </div>
-            </div>
-
-            <div className="dashboard-card">
-              <div className="card-head">
-                <div>
-                  <h3>People off duty</h3>
-                  <p>Leave / sick / off records.</p>
-                </div>
-                <button className="mini-action" onClick={() => setTab('personnel')}>Open leave</button>
-              </div>
-              <MiniTable rows={peopleOff.slice(0, 8)} columns={[{ key: 'name', label: 'Name' }, { key: 'section', label: 'Section' }, { key: 'leave_reason', label: 'Reason' }, { key: 'employment_status', label: 'Status' }]} empty="No people off duty recorded." />
-            </div>
-
-            <div className="dashboard-card">
-              <div className="card-head">
-                <div>
-                  <h3>Spares due this week</h3>
-                  <p>Low stock and open spares orders.</p>
-                </div>
-                <button className="mini-action" onClick={() => setTab('spares')}>Open spares</button>
-              </div>
-              <div className="reminder-list">
-                {sparesLow.slice(0, 5).map((s) => <p key={s.id}><b>{s.part_no}</b> {s.description} stock {s.stock_qty} / min {s.min_qty}</p>)}
-                {openSpareOrders.slice(0, 5).map((o) => <p key={o.id}><b>{o.part_no}</b> {o.description} · Qty {o.qty} · {o.status}</p>)}
-                {!sparesLow.length && !openSpareOrders.length && <p>No spares due this week.</p>}
-              </div>
-            </div>
+          <div className="card parts-book-card"><h3>PDF parts books</h3><p className="muted">Upload PDF, save it, then open it to see diagrams. Click extracted part numbers into the order sheet.</p><div className="form-grid">
+            <Field label="Book title"><input value={partsBookForm.book_title} onChange={(e) => setPartsBookForm({ ...partsBookForm, book_title: e.target.value })} /></Field>
+            <Field label="Area"><select value={partsBookForm.machine_group} onChange={(e) => setPartsBookForm({ ...partsBookForm, machine_group: e.target.value })}>{machineGroups.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Machine type"><input value={partsBookForm.machine_type} onChange={(e) => setPartsBookForm({ ...partsBookForm, machine_type: e.target.value })} /></Field>
+            <Field label="Uploaded by"><input value={partsBookForm.uploaded_by} onChange={(e) => setPartsBookForm({ ...partsBookForm, uploaded_by: e.target.value })} /></Field>
           </div>
-        </section>
-      )}
-
-      {tab === 'fleet' && (
-        <section className="panel">
-          <SectionTitle title="Fleet Register" subtitle="Upload Excel or add machines manually. Search by fleet number, department, status or type." />
-          <div className="toolbar">
-            <input className="search" placeholder="Search fleet..." value={search} onChange={(e) => setSearch(e.target.value)} />
-            {isAdmin && <label className="upload">Upload Fleet Excel<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadFleet(e.target.files?.[0])} /></label>}
+          <input type="file" accept="application/pdf,.pdf" onChange={(e) => attachPartsBook(e.target.files?.[0])} />
+          {partsBookForm.file_name && <div className="file-note"><b>{partsBookForm.file_name}</b> · {partsBookForm.extracted_count || 0} possible part numbers</div>}
+          <div className="part-chip-box">{String(partsBookForm.extracted_part_numbers || '').split(/[\n,; ]+/).filter(Boolean).slice(0, 80).map((p) => <button key={p} className="part-chip" onClick={() => addPartToOrder(p)}>{p}</button>)}</div>
+          <button className="primary" onClick={() => saveRow('parts_books', partsBookForm)}>Save parts book</button>
           </div>
-          {isAdmin && <div className="form-grid">
-            <input placeholder="Fleet No" value={fleetForm.fleet_no} onChange={(e) => setFleetForm({ ...fleetForm, fleet_no: e.target.value })} />
-            <input placeholder="Machine Type" value={fleetForm.machine_type} onChange={(e) => setFleetForm({ ...fleetForm, machine_type: e.target.value })} />
-            <input placeholder="Make / Model" value={fleetForm.make_model} onChange={(e) => setFleetForm({ ...fleetForm, make_model: e.target.value })} />
-            <input placeholder="Department" value={fleetForm.department} onChange={(e) => setFleetForm({ ...fleetForm, department: e.target.value })} />
-            <input placeholder="Location" value={fleetForm.location} onChange={(e) => setFleetForm({ ...fleetForm, location: e.target.value })} />
-            <input type="number" placeholder="Hours" value={fleetForm.hours} onChange={(e) => setFleetForm({ ...fleetForm, hours: e.target.value })} />
-            <select value={fleetForm.status} onChange={(e) => setFleetForm({ ...fleetForm, status: e.target.value })}><option>Available</option><option>Online</option><option>Offline</option><option>Down</option><option>Under Repair</option></select>
-            <input type="number" placeholder="Service interval" value={fleetForm.service_interval_hours} onChange={(e) => setFleetForm({ ...fleetForm, service_interval_hours: e.target.value })} />
-            <input type="number" placeholder="Last service hours" value={fleetForm.last_service_hours} onChange={(e) => setFleetForm({ ...fleetForm, last_service_hours: e.target.value, next_service_hours: n(e.target.value) + n(fleetForm.service_interval_hours) })} />
-            <button className="primary" onClick={() => saveRow('fleet_machines', { ...fleetForm, next_service_hours: n(fleetForm.last_service_hours) + n(fleetForm.service_interval_hours) }, 'upsert')}>Save Machine</button>
-          </div>}
-          <MiniTable rows={filteredFleet} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'machine_type', label: 'Type' }, { key: 'make_model', label: 'Make / Model' }, { key: 'department', label: 'Department' }, { key: 'location', label: 'Location' }, { key: 'hours', label: 'Hours' }, { key: 'next_service_hours', label: 'Next Service' }, { key: 'status', label: 'Status' }]} />
-        </section>
-      )}
+        </div>
+        <div className="card"><div className="card-head"><h3>Order board</h3><div className="filters"><input placeholder="Search orders..." value={sparesSearch} onChange={(e) => setSparesSearch(e.target.value)} /><select value={sparesStage} onChange={(e) => setSparesStage(e.target.value)}><option>All</option>{orderStages.map((x) => <option key={x}>{x}</option>)}{orderTypes.map((x) => <option key={x}>{x}</option>)}{machineGroups.map((x) => <option key={x}>{x}</option>)}</select></div></div>
+          <div className="kanban-grid">{orderStages.slice(0, 5).map((stage) => <details className="drop-panel kanban-drop" key={stage} open={['Requested','Awaiting Funding','Awaiting Delivery'].includes(stage)}><summary><span>{stage}</span><Badge value={filteredSpareOrders.filter((o) => String(o.workflow_stage || o.status) === stage).length} /></summary>{renderSparesOrderCards(filteredSpareOrders.filter((o) => String(o.workflow_stage || o.status) === stage))}</details>)}</div>
+        </div>
+        <div className="grid-2"><div className="card"><h3>Saved PDF parts books</h3><MiniTable rows={data.parts_books} onRow={showPdfBook} columns={[{ key: 'book_title', label: 'Book' }, { key: 'machine_group', label: 'Area' }, { key: 'machine_type', label: 'Machine' }, { key: 'file_name', label: 'File' }, { key: 'extracted_count', label: 'Parts' }, { key: 'open', label: 'Open', render: () => <button>Open PDF</button> }]} empty="No PDF parts books uploaded." /></div><div className="card"><h3>Stock availability</h3><MiniTable rows={data.spares} columns={[{ key: 'part_no', label: 'Part' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }, { key: 'order_status', label: 'Status', render: (r) => <Badge value={n(r.stock_qty) <= n(r.min_qty) ? 'Low stock' : r.order_status} /> }]} empty="No stock loaded." /></div></div>
+      </div>}
 
-      {tab === 'breakdowns' && (
-        <section className="panel">
-          <SectionTitle title="Breakdowns" subtitle="Record faults, downtime, cause, delay and who is working on the machine." />
-          <div className="form-grid">
-            <input placeholder="Fleet No" value={breakdownForm.fleet_no} onChange={(e) => setBreakdownForm({ ...breakdownForm, fleet_no: e.target.value })} />
-            <input placeholder="Category" value={breakdownForm.category} onChange={(e) => setBreakdownForm({ ...breakdownForm, category: e.target.value })} />
-            <input placeholder="Fault reported" value={breakdownForm.fault} onChange={(e) => setBreakdownForm({ ...breakdownForm, fault: e.target.value })} />
-            <input placeholder="Reported by" value={breakdownForm.reported_by} onChange={(e) => setBreakdownForm({ ...breakdownForm, reported_by: e.target.value })} />
-            <input placeholder="Assigned to" value={breakdownForm.assigned_to} onChange={(e) => setBreakdownForm({ ...breakdownForm, assigned_to: e.target.value })} />
-            <input type="datetime-local" value={breakdownForm.start_time} onChange={(e) => setBreakdownForm({ ...breakdownForm, start_time: e.target.value })} />
-            <select value={breakdownForm.status} onChange={(e) => setBreakdownForm({ ...breakdownForm, status: e.target.value })}><option>Open</option><option>In progress</option><option>Awaiting spares</option><option>Complete</option></select>
-            <input placeholder="Cause" value={breakdownForm.cause} onChange={(e) => setBreakdownForm({ ...breakdownForm, cause: e.target.value })} />
-            <input placeholder="Action taken" value={breakdownForm.action_taken} onChange={(e) => setBreakdownForm({ ...breakdownForm, action_taken: e.target.value })} />
-            <input placeholder="Delay reason" value={breakdownForm.delay_reason} onChange={(e) => setBreakdownForm({ ...breakdownForm, delay_reason: e.target.value })} />
-            <button className="primary" onClick={() => saveRow('breakdowns', { ...breakdownForm, downtime_hours: breakdownForm.start_time ? one((Date.now() - new Date(breakdownForm.start_time).getTime()) / 36e5) : 0 })}>Save Breakdown</button>
-          </div>
-          <MiniTable rows={data.breakdowns} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'category', label: 'Category' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'downtime_hours', label: 'Hours Down' }, { key: 'status', label: 'Status' }]} />
-        </section>
-      )}
+      {tab === 'batteries' && <div className="page-grid batteries-page">
+        <SectionTitle title="Battery control" subtitle="Battery serial tracking, fitment pictures, maintenance reminders, stock and ordering against machines." />
+        <div className="stats-grid mini"><StatCard title="Fitted Batteries" value={data.batteries.filter((b) => String(b.status || b.stock_status).toLowerCase().includes('fitted')).length} /><StatCard title="Stock Batteries" value={data.batteries.filter((b) => String(b.stock_status || '').toLowerCase().includes('stock')).length} tone="green" /><StatCard title="Maintenance Due" value={data.batteries.filter((b) => dateOnly(b.maintenance_due_date) && new Date(b.maintenance_due_date) <= new Date()).length} tone="orange" /><StatCard title="Battery Orders" value={batteryRequests.length} tone="red" /></div>
+        <div className="grid-2">
+          <div className="card form-card"><h3>Battery fitment / stock record</h3><div className="form-grid">
+            <Field label="Battery make"><input value={batteryForm.make} onChange={(e) => setBatteryForm({ ...batteryForm, make: e.target.value })} /></Field>
+            <Field label="Serial number"><input value={batteryForm.serial_no} onChange={(e) => setBatteryForm({ ...batteryForm, serial_no: e.target.value })} /></Field>
+            <Field label="Production date"><input type="date" value={dateOnly(batteryForm.production_date)} onChange={(e) => setBatteryForm({ ...batteryForm, production_date: e.target.value })} /></Field>
+            <Field label="Date fitted"><input type="date" value={dateOnly(batteryForm.fitment_date)} onChange={(e) => setBatteryForm({ ...batteryForm, fitment_date: e.target.value })} /></Field>
+            <Field label="Fleet number"><input list="fleetList" value={batteryForm.fleet_no} onChange={(e) => setBatteryForm({ ...batteryForm, fleet_no: e.target.value })} /></Field>
+            <Field label="Fitted by"><input value={batteryForm.fitted_by} onChange={(e) => setBatteryForm({ ...batteryForm, fitted_by: e.target.value })} /></Field>
+            <Field label="Battery volts"><select value={batteryForm.volts} onChange={(e) => setBatteryForm({ ...batteryForm, volts: e.target.value })}>{batteryVoltages.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Charging system voltage"><input value={batteryForm.charging_voltage} onChange={(e) => setBatteryForm({ ...batteryForm, charging_voltage: e.target.value })} /></Field>
+            <Field label="Hours when fitted"><input type="number" value={batteryForm.fitment_hours} onChange={(e) => setBatteryForm({ ...batteryForm, fitment_hours: Number(e.target.value) })} /></Field>
+            <Field label="Mileage when fitted"><input type="number" value={batteryForm.fitment_mileage} onChange={(e) => setBatteryForm({ ...batteryForm, fitment_mileage: Number(e.target.value) })} /></Field>
+            <Field label="Maintenance due"><input type="date" value={dateOnly(batteryForm.maintenance_due_date)} onChange={(e) => setBatteryForm({ ...batteryForm, maintenance_due_date: e.target.value })} /></Field>
+            <Field label="Status"><select value={batteryForm.stock_status} onChange={(e) => setBatteryForm({ ...batteryForm, stock_status: e.target.value, status: e.target.value })}><option>Fitted</option><option>In Stock</option><option>Removed</option><option>Scrapped</option><option>On Charge</option></select></Field>
+          </div><Field label="Battery fitment picture"><input type="file" accept="image/*" onChange={(e) => attachPhoto(e.target.files?.[0], (v) => setBatteryForm((p) => ({ ...p, fitment_photo: v })))} /></Field>{batteryForm.fitment_photo && <img className="thumb" src={batteryForm.fitment_photo} alt="Battery fitment" />}<button className="primary" onClick={() => saveRow('batteries', batteryForm)}>Save battery record</button></div>
+          <div className="card form-card"><h3>Battery order request</h3><div className="form-grid">
+            <Field label="Fleet number"><input list="fleetList" value={batteryOrderForm.fleet_no} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, fleet_no: e.target.value })} /></Field>
+            <Field label="Battery type"><input value={batteryOrderForm.battery_type} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, battery_type: e.target.value })} /></Field>
+            <Field label="Voltage"><select value={batteryOrderForm.voltage} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, voltage: e.target.value })}>{batteryVoltages.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Qty"><input type="number" value={batteryOrderForm.qty} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, qty: Number(e.target.value) })} /></Field>
+            <Field label="Requested by"><input value={batteryOrderForm.requested_by} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, requested_by: e.target.value })} /></Field>
+            <Field label="Priority"><select value={batteryOrderForm.priority} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, priority: e.target.value })}>{priorities.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="ETA"><input type="date" value={dateOnly(batteryOrderForm.eta)} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, eta: e.target.value })} /></Field>
+            <Field label="Status"><select value={batteryOrderForm.status} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, status: e.target.value })}>{orderStages.map((x) => <option key={x}>{x}</option>)}</select></Field>
+          </div><Field label="Reason"><textarea rows={4} value={batteryOrderForm.reason} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, reason: e.target.value })} /></Field><button className="primary" onClick={() => saveRow('battery_orders', batteryOrderForm)}>Submit battery request + notify admin</button></div>
+        </div>
+        <div className="grid-2"><div className="card"><h3>All batteries</h3><MiniTable rows={data.batteries} columns={[{ key: 'serial_no', label: 'Serial' }, { key: 'make', label: 'Make' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'fitment_date', label: 'Fitted' }, { key: 'fitment_hours', label: 'Hours' }, { key: 'maintenance_due_date', label: 'Maint Due' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.stock_status || r.status} /> }]} /></div><div className="card"><h3>Battery orders / admin alerts</h3><MiniTable rows={data.battery_orders} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'battery_type', label: 'Battery' }, { key: 'qty', label: 'Qty' }, { key: 'requested_by', label: 'By' }, { key: 'priority', label: 'Priority' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></div></div>
+      </div>}
 
-      {tab === 'repairs' && (
-        <section className="panel">
-          <SectionTitle title="Repairs and Job Cards" subtitle="Record workshop repair jobs, job card number, parts used and finish details." />
-          <div className="form-grid">
-            <input placeholder="Fleet No" value={repairForm.fleet_no} onChange={(e) => setRepairForm({ ...repairForm, fleet_no: e.target.value })} />
-            <input placeholder="Job Card No" value={repairForm.job_card_no} onChange={(e) => setRepairForm({ ...repairForm, job_card_no: e.target.value })} />
-            <input placeholder="Fault / repair" value={repairForm.fault} onChange={(e) => setRepairForm({ ...repairForm, fault: e.target.value })} />
-            <input placeholder="Assigned to" value={repairForm.assigned_to} onChange={(e) => setRepairForm({ ...repairForm, assigned_to: e.target.value })} />
-            <input type="datetime-local" value={repairForm.start_time} onChange={(e) => setRepairForm({ ...repairForm, start_time: e.target.value })} />
-            <input type="datetime-local" value={repairForm.end_time} onChange={(e) => setRepairForm({ ...repairForm, end_time: e.target.value })} />
-            <select value={repairForm.status} onChange={(e) => setRepairForm({ ...repairForm, status: e.target.value })}><option>In progress</option><option>Awaiting spares</option><option>Complete</option></select>
-            <input placeholder="Parts used" value={repairForm.parts_used} onChange={(e) => setRepairForm({ ...repairForm, parts_used: e.target.value })} />
-            <input placeholder="Notes" value={repairForm.notes} onChange={(e) => setRepairForm({ ...repairForm, notes: e.target.value })} />
-            <button className="primary" onClick={() => saveRow('repairs', { ...repairForm, hours_worked: repairForm.start_time && repairForm.end_time ? one((new Date(repairForm.end_time).getTime() - new Date(repairForm.start_time).getTime()) / 36e5) : 0 })}>Save Repair</button>
-          </div>
-          <MiniTable rows={data.repairs} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'fault', label: 'Repair' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'hours_worked', label: 'Hours' }, { key: 'status', label: 'Status' }]} />
-        </section>
-      )}
+      {tab === 'tyres' && <div className="page-grid tyres-page">
+        <SectionTitle title="Tyre control" subtitle="Tyre serial/company number tracking, repairs, fitment photos, measurements, reminders, stock and order requests." />
+        <div className="stats-grid mini"><StatCard title="Fitted Tyres" value={data.tyres.filter((t) => String(t.status || t.stock_status).toLowerCase().includes('fitted')).length} /><StatCard title="Stock Tyres" value={data.tyres.filter((t) => String(t.stock_status || '').toLowerCase().includes('stock')).length} tone="green" /><StatCard title="Measurements Due" value={data.tyres.filter((t) => dateOnly(t.measurement_due_date) && new Date(t.measurement_due_date) <= new Date()).length} tone="orange" /><StatCard title="Tyre Orders" value={tyreRequests.length} tone="red" /></div>
+        <div className="grid-2">
+          <div className="card form-card"><h3>Tyre fitment / stock record</h3><div className="form-grid">
+            <Field label="Tyre make"><input value={tyreForm.make} onChange={(e) => setTyreForm({ ...tyreForm, make: e.target.value })} /></Field>
+            <Field label="Serial number"><input value={tyreForm.serial_no} onChange={(e) => setTyreForm({ ...tyreForm, serial_no: e.target.value })} /></Field>
+            <Field label="Company number"><input value={tyreForm.company_no} onChange={(e) => setTyreForm({ ...tyreForm, company_no: e.target.value })} /></Field>
+            <Field label="Production date"><input type="date" value={dateOnly(tyreForm.production_date)} onChange={(e) => setTyreForm({ ...tyreForm, production_date: e.target.value })} /></Field>
+            <Field label="Date fitted"><input type="date" value={dateOnly(tyreForm.fitted_date)} onChange={(e) => setTyreForm({ ...tyreForm, fitted_date: e.target.value })} /></Field>
+            <Field label="Fleet number"><input list="fleetList" value={tyreForm.fleet_no} onChange={(e) => setTyreForm({ ...tyreForm, fleet_no: e.target.value })} /></Field>
+            <Field label="Position"><select value={tyreForm.position} onChange={(e) => setTyreForm({ ...tyreForm, position: e.target.value })}>{tyrePositions.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Fitted by"><input value={tyreForm.fitted_by} onChange={(e) => setTyreForm({ ...tyreForm, fitted_by: e.target.value })} /></Field>
+            <Field label="Tyre type"><input value={tyreForm.tyre_type} onChange={(e) => setTyreForm({ ...tyreForm, tyre_type: e.target.value })} /></Field>
+            <Field label="Size"><input value={tyreForm.size} onChange={(e) => setTyreForm({ ...tyreForm, size: e.target.value })} /></Field>
+            <Field label="Hours fitted"><input type="number" value={tyreForm.fitment_hours} onChange={(e) => setTyreForm({ ...tyreForm, fitment_hours: Number(e.target.value) })} /></Field>
+            <Field label="Mileage fitted"><input type="number" value={tyreForm.fitment_mileage} onChange={(e) => setTyreForm({ ...tyreForm, fitment_mileage: Number(e.target.value) })} /></Field>
+            <Field label="Current tread mm"><input type="number" value={tyreForm.current_tread_mm} onChange={(e) => setTyreForm({ ...tyreForm, current_tread_mm: Number(e.target.value) })} /></Field>
+            <Field label="Measurement due"><input type="date" value={dateOnly(tyreForm.measurement_due_date)} onChange={(e) => setTyreForm({ ...tyreForm, measurement_due_date: e.target.value })} /></Field>
+            <Field label="Status"><select value={tyreForm.stock_status} onChange={(e) => setTyreForm({ ...tyreForm, stock_status: e.target.value, status: e.target.value })}><option>Fitted</option><option>In Stock</option><option>Repaired</option><option>Removed</option><option>Scrapped</option></select></Field>
+          </div><Field label="Fitment picture"><input type="file" accept="image/*" onChange={(e) => attachPhoto(e.target.files?.[0], (v) => setTyreForm((p) => ({ ...p, fitment_photo: v })))} /></Field>{tyreForm.fitment_photo && <img className="thumb" src={tyreForm.fitment_photo} alt="Tyre fitment" />}<button className="primary" onClick={() => saveRow('tyres', tyreForm)}>Save tyre record</button></div>
+          <div className="card form-card"><h3>Tyre measurement / repair</h3><div className="form-grid">
+            <Field label="Tyre serial"><input value={tyreMeasurementForm.tyre_serial_no} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, tyre_serial_no: e.target.value })} /></Field>
+            <Field label="Fleet"><input list="fleetList" value={tyreMeasurementForm.fleet_no} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, fleet_no: e.target.value })} /></Field>
+            <Field label="Position"><select value={tyreMeasurementForm.position} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, position: e.target.value })}>{tyrePositions.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Date"><input type="date" value={dateOnly(tyreMeasurementForm.measurement_date)} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, measurement_date: e.target.value })} /></Field>
+            <Field label="Measured / repaired by"><input value={tyreMeasurementForm.measured_by} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, measured_by: e.target.value })} /></Field>
+            <Field label="Tread depth mm"><input type="number" value={tyreMeasurementForm.tread_depth_mm} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, tread_depth_mm: Number(e.target.value) })} /></Field>
+            <Field label="Pressure PSI"><input type="number" value={tyreMeasurementForm.pressure_psi} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, pressure_psi: Number(e.target.value) })} /></Field>
+            <Field label="Condition"><select value={tyreMeasurementForm.condition} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, condition: e.target.value })}><option>Good</option><option>Monitor</option><option>Repair Done</option><option>Replace Soon</option><option>Scrap</option></select></Field>
+          </div><Field label="Reason / notes"><textarea rows={4} value={tyreMeasurementForm.notes} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, notes: e.target.value })} /></Field><button className="primary" onClick={() => saveRow('tyre_measurements', tyreMeasurementForm)}>Save measurement / repair</button></div>
+        </div>
+        <div className="card form-card"><h3>Tyre order / quote request</h3><div className="form-grid"><Field label="Fleet"><input list="fleetList" value={tyreOrderForm.fleet_no} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, fleet_no: e.target.value })} /></Field><Field label="Tyre type"><input value={tyreOrderForm.tyre_type} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, tyre_type: e.target.value })} /></Field><Field label="Size"><input value={tyreOrderForm.size} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, size: e.target.value })} /></Field><Field label="Qty"><input type="number" value={tyreOrderForm.qty} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, qty: Number(e.target.value) })} /></Field><Field label="Requested by"><input value={tyreOrderForm.requested_by} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, requested_by: e.target.value })} /></Field><Field label="Priority"><select value={tyreOrderForm.priority} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, priority: e.target.value })}>{priorities.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Status"><select value={tyreOrderForm.status} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, status: e.target.value })}>{orderStages.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="ETA"><input type="date" value={dateOnly(tyreOrderForm.eta)} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, eta: e.target.value })} /></Field></div><Field label="Reason"><textarea rows={3} value={tyreOrderForm.reason} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, reason: e.target.value })} /></Field><button className="primary" onClick={() => saveRow('tyre_orders', tyreOrderForm)}>Submit tyre order + notify admin</button></div>
+        <div className="grid-2"><div className="card"><h3>Tyres by fleet</h3><MiniTable rows={data.tyres} columns={[{ key: 'serial_no', label: 'Serial' }, { key: 'company_no', label: 'Company No' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'position', label: 'Pos' }, { key: 'current_tread_mm', label: 'Tread' }, { key: 'measurement_due_date', label: 'Measure Due' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.stock_status || r.status} /> }]} /></div><div className="card"><h3>Tyre orders / quotes</h3><MiniTable rows={data.tyre_orders} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'tyre_type', label: 'Type' }, { key: 'size', label: 'Size' }, { key: 'qty', label: 'Qty' }, { key: 'requested_by', label: 'By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></div></div>
+      </div>}
 
-      {tab === 'services' && (
-        <section className="panel">
-          <SectionTitle title="Service Schedule" subtitle="Upload an Excel service plan and the app will show due reminders." />
-          <div className="toolbar">
-            {isAdmin && <label className="upload">Upload Service Schedule<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadService(e.target.files?.[0])} /></label>}
-          </div>
-          <div className="form-grid">
-            <input placeholder="Fleet No" value={serviceForm.fleet_no} onChange={(e) => setServiceForm({ ...serviceForm, fleet_no: e.target.value })} />
-            <input placeholder="Service type" value={serviceForm.service_type} onChange={(e) => setServiceForm({ ...serviceForm, service_type: e.target.value })} />
-            <input type="number" placeholder="Due hours" value={serviceForm.scheduled_hours} onChange={(e) => setServiceForm({ ...serviceForm, scheduled_hours: e.target.value })} />
-            <input type="date" value={serviceForm.due_date} onChange={(e) => setServiceForm({ ...serviceForm, due_date: e.target.value })} />
-            <select value={serviceForm.status} onChange={(e) => setServiceForm({ ...serviceForm, status: e.target.value })}><option>Due</option><option>Planned</option><option>Completed</option><option>Overdue</option></select>
-            <input placeholder="Technician" value={serviceForm.technician} onChange={(e) => setServiceForm({ ...serviceForm, technician: e.target.value })} />
-            <input placeholder="Notes" value={serviceForm.notes} onChange={(e) => setServiceForm({ ...serviceForm, notes: e.target.value })} />
-            <button className="primary" onClick={() => saveRow('services', serviceForm)}>Save Service</button>
-          </div>
-          <MiniTable rows={data.services} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'scheduled_hours', label: 'Due Hours' }, { key: 'due_date', label: 'Due Date' }, { key: 'technician', label: 'Technician' }, { key: 'status', label: 'Status' }]} />
-        </section>
-      )}
+      {tab === 'services' && <div className="page-grid services-page">
+        <SectionTitle title="Services" subtitle="See past services, job cards, supervisors, technicians and complete service history by fleet." right={<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadService(e.target.files?.[0])} />} />
+        <div className="card form-card"><h3>Service job card</h3><div className="form-grid"><Field label="Fleet"><input list="fleetList" value={serviceForm.fleet_no} onChange={(e) => setServiceForm({ ...serviceForm, fleet_no: e.target.value })} /></Field><Field label="Service type"><input value={serviceForm.service_type} onChange={(e) => setServiceForm({ ...serviceForm, service_type: e.target.value })} /></Field><Field label="Due date"><input type="date" value={dateOnly(serviceForm.due_date)} onChange={(e) => setServiceForm({ ...serviceForm, due_date: e.target.value })} /></Field><Field label="Scheduled hours"><input type="number" value={serviceForm.scheduled_hours} onChange={(e) => setServiceForm({ ...serviceForm, scheduled_hours: Number(e.target.value) })} /></Field><Field label="Completed date"><input type="date" value={dateOnly(serviceForm.completed_date)} onChange={(e) => setServiceForm({ ...serviceForm, completed_date: e.target.value })} /></Field><Field label="Completed hours"><input type="number" value={serviceForm.completed_hours} onChange={(e) => setServiceForm({ ...serviceForm, completed_hours: Number(e.target.value) })} /></Field><Field label="Job card"><input value={serviceForm.job_card_no} onChange={(e) => setServiceForm({ ...serviceForm, job_card_no: e.target.value })} /></Field><Field label="Supervisor"><input value={serviceForm.supervisor} onChange={(e) => setServiceForm({ ...serviceForm, supervisor: e.target.value })} /></Field><Field label="Technician"><input value={serviceForm.technician} onChange={(e) => setServiceForm({ ...serviceForm, technician: e.target.value })} /></Field><Field label="Status"><select value={serviceForm.status} onChange={(e) => setServiceForm({ ...serviceForm, status: e.target.value })}><option>Due</option><option>In progress</option><option>Completed</option><option>Deferred</option></select></Field></div><Field label="Service notes"><textarea rows={4} value={serviceForm.notes} onChange={(e) => setServiceForm({ ...serviceForm, notes: e.target.value })} /></Field><button className="primary" onClick={() => saveRow('services', serviceForm)}>Save service</button></div>
+        <div className="grid-2"><div className="card"><h3>Due / active services</h3><MiniTable rows={servicesDue} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'due_date', label: 'Due' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'supervisor', label: 'Supervisor' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></div><div className="card"><h3>Past service history</h3><MiniTable rows={data.services.filter((s) => String(s.status || '').toLowerCase().includes('complete'))} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'completed_date', label: 'Completed' }, { key: 'completed_hours', label: 'Hours' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'technician', label: 'Technician' }]} empty="No completed services yet." /></div></div>
+      </div>}
 
-      {tab === 'spares' && (
-        <section className="panel spares-panel">
-          <SectionTitle title="Spares Ordering Control" subtitle="Request spares by fleet number, move them through funding, local or international orders, delivery ETA and parts book lookup." />
+      {tab === 'breakdowns' && <div className="page-grid breakdown-page">
+        <SectionTitle title="Breakdown control" subtitle="Track downtime, spares ETA, availability ETA, repeated faults and preventative maintenance suggestions." />
+        <div className="card form-card"><h3>Breakdown event</h3><div className="form-grid"><Field label="Fleet"><input list="fleetList" value={breakdownForm.fleet_no} onChange={(e) => setBreakdownForm({ ...breakdownForm, fleet_no: e.target.value })} /></Field><Field label="Fault category"><input value={breakdownForm.category} onChange={(e) => setBreakdownForm({ ...breakdownForm, category: e.target.value })} /></Field><Field label="Reported by"><input value={breakdownForm.reported_by} onChange={(e) => setBreakdownForm({ ...breakdownForm, reported_by: e.target.value })} /></Field><Field label="Worked by"><input value={breakdownForm.assigned_to} onChange={(e) => setBreakdownForm({ ...breakdownForm, assigned_to: e.target.value })} /></Field><Field label="Start time"><input type="datetime-local" value={breakdownForm.start_time} onChange={(e) => setBreakdownForm({ ...breakdownForm, start_time: e.target.value })} /></Field><Field label="Spares ETA"><input type="date" value={dateOnly(breakdownForm.spare_eta)} onChange={(e) => setBreakdownForm({ ...breakdownForm, spare_eta: e.target.value })} /></Field><Field label="Expected available"><input type="date" value={dateOnly(breakdownForm.expected_available_date)} onChange={(e) => setBreakdownForm({ ...breakdownForm, expected_available_date: e.target.value })} /></Field><Field label="Status"><select value={breakdownForm.status} onChange={(e) => setBreakdownForm({ ...breakdownForm, status: e.target.value })}><option>Open</option><option>Awaiting Spares</option><option>In progress</option><option>Available</option><option>Closed</option></select></Field></div><Field label="Fault"><textarea rows={3} value={breakdownForm.fault} onChange={(e) => setBreakdownForm({ ...breakdownForm, fault: e.target.value })} /></Field><Field label="Action / preventative maintenance suggestion"><textarea rows={3} value={breakdownForm.preventative_recommendation} onChange={(e) => setBreakdownForm({ ...breakdownForm, preventative_recommendation: e.target.value })} /></Field><button className="primary" onClick={() => saveRow('breakdowns', breakdownForm)}>Save breakdown</button></div>
+        <div className="grid-2"><div className="card"><h3>Active breakdowns</h3><MiniTable rows={openBreakdowns} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'category', label: 'Type' }, { key: 'assigned_to', label: 'Worked By' }, { key: 'spare_eta', label: 'Spares ETA' }, { key: 'expected_available_date', label: 'Available ETA' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></div><div className="card"><h3>Repeated fault suggestions</h3><MiniTable rows={repeatedFaults} columns={[{ key: 'fault', label: 'Repeated fault' }, { key: 'count', label: 'Times' }, { key: 'recommendation', label: 'Action' }]} empty="No repeated faults yet." /></div></div>
+      </div>}
 
-          <div className="spares-control-bar">
-            <input className="search" placeholder="Search fleet, part number, requester, status..." value={sparesSearch} onChange={(e) => setSparesSearch(e.target.value)} />
-            <select value={sparesStage} onChange={(e) => setSparesStage(e.target.value)}>
-              <option>All</option>
-              <option>Requested</option>
-              <option>Awaiting Funding</option>
-              <option>Funded</option>
-              <option>Awaiting Delivery</option>
-              <option>Local Order</option>
-              <option>International Order</option>
-              <option>Truck</option>
-              <option>Yellow Machine</option>
-            </select>
-            <button className="ghost" onClick={() => { setSparesSearch(''); setSparesStage('All') }}>Clear filter</button>
-          </div>
+      {tab === 'repairs' && <div className="page-grid"><SectionTitle title="Repairs and job cards" subtitle="Record who worked on what, when and what parts were used." /><div className="card form-card"><div className="form-grid"><Field label="Fleet"><input list="fleetList" value={repairForm.fleet_no} onChange={(e) => setRepairForm({ ...repairForm, fleet_no: e.target.value })} /></Field><Field label="Job card"><input value={repairForm.job_card_no} onChange={(e) => setRepairForm({ ...repairForm, job_card_no: e.target.value })} /></Field><Field label="Assigned to"><input value={repairForm.assigned_to} onChange={(e) => setRepairForm({ ...repairForm, assigned_to: e.target.value })} /></Field><Field label="Start"><input type="datetime-local" value={repairForm.start_time} onChange={(e) => setRepairForm({ ...repairForm, start_time: e.target.value })} /></Field><Field label="End"><input type="datetime-local" value={repairForm.end_time} onChange={(e) => setRepairForm({ ...repairForm, end_time: e.target.value })} /></Field><Field label="Status"><select value={repairForm.status} onChange={(e) => setRepairForm({ ...repairForm, status: e.target.value })}><option>In progress</option><option>Awaiting Spares</option><option>Completed</option><option>Closed</option></select></Field></div><Field label="Fault"><textarea rows={3} value={repairForm.fault} onChange={(e) => setRepairForm({ ...repairForm, fault: e.target.value })} /></Field><Field label="Parts used"><textarea rows={3} value={repairForm.parts_used} onChange={(e) => setRepairForm({ ...repairForm, parts_used: e.target.value })} /></Field><button className="primary" onClick={() => saveRow('repairs', repairForm)}>Save repair</button></div><div className="card"><h3>Repair list</h3><MiniTable rows={data.repairs} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'assigned_to', label: 'Worked By' }, { key: 'fault', label: 'Fault' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></div></div>}
 
-          <div className="stats-grid">
-            <StatCard label="Requests" value={requestedOrders.length} note="New spares sheets" icon="🧾" tone="blue" />
-            <StatCard label="Awaiting Funding" value={awaitingFundingOrders.length} note="Waiting approval/money" icon="💰" tone="orange" />
-            <StatCard label="Awaiting Delivery" value={awaitingDeliveryOrders.length} note="ETA required" icon="🚚" tone="red" />
-            <StatCard label="Funded" value={fundedOrders.length} note="Ready to order/ordered" icon="✅" tone="green" />
-            <StatCard label="Local Orders" value={localOrders.length} note="Zimbabwe/local suppliers" icon="🏪" tone="grey" />
-            <StatCard label="International" value={internationalOrders.length} note="Outside country" icon="🌍" tone="blue" />
-            <StatCard label="Truck Spares" value={truckOrders.length} note="Truck requests" icon="🚛" tone="orange" />
-            <StatCard label="Yellow Machines" value={yellowMachineOrders.length} note="Loader/dozer/excavator" icon="🚜" tone="green" />
-          </div>
+      {tab === 'personnel' && <div className="page-grid personnel-page"><SectionTitle title="Personnel, shifts and leave" subtitle="Shift 1, Shift 2, Shift 3, managers, foremen, leave balances, off schedule and history." right={<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadPersonnel(e.target.files?.[0])} />} /><div className="stats-grid mini"><StatCard title="Managers" value={data.personnel.filter((p) => String(p.role).includes('Manager')).length} /><StatCard title="Foremen" value={data.personnel.filter((p) => String(p.role).includes('Foreman')).length} /><StatCard title="Current Leave" value={currentLeave.length} tone="orange" /><StatCard title="Upcoming Leave" value={upcomingLeave.length} /></div><div className="grid-2"><div className="card form-card"><h3>Add employee / slot</h3><div className="form-grid"><Field label="Emp No"><input value={personForm.employee_no} onChange={(e) => setPersonForm({ ...personForm, employee_no: e.target.value })} /></Field><Field label="Name"><input value={personForm.name} onChange={(e) => setPersonForm({ ...personForm, name: e.target.value })} /></Field><Field label="Shift"><select value={personForm.shift} onChange={(e) => setPersonForm({ ...personForm, shift: e.target.value })}>{shiftNames.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Section"><select value={personForm.section} onChange={(e) => setPersonForm({ ...personForm, section: e.target.value })}>{workshopSections.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Role"><select value={personForm.role} onChange={(e) => setPersonForm({ ...personForm, role: e.target.value })}>{personnelRoles.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Status"><select value={personForm.employment_status} onChange={(e) => setPersonForm({ ...personForm, employment_status: e.target.value })}><option>Active</option><option>On Leave</option><option>Off Duty</option><option>Vacant</option><option>Suspended</option></select></Field><Field label="Leave balance"><input type="number" value={personForm.leave_balance_days} onChange={(e) => setPersonForm({ ...personForm, leave_balance_days: Number(e.target.value) })} /></Field><Field label="Leave taken"><input type="number" value={personForm.leave_taken_days} onChange={(e) => setPersonForm({ ...personForm, leave_taken_days: Number(e.target.value) })} /></Field></div><button className="primary" onClick={() => saveRow('personnel', personForm, 'upsert')}>Save person</button></div><div className="card form-card"><h3>Add leave / off schedule</h3><div className="form-grid"><Field label="Person"><input value={leaveForm.person_name} onChange={(e) => setLeaveForm({ ...leaveForm, person_name: e.target.value })} /></Field><Field label="Emp No"><input value={leaveForm.employee_no} onChange={(e) => setLeaveForm({ ...leaveForm, employee_no: e.target.value })} /></Field><Field label="Type"><select value={leaveForm.leave_type} onChange={(e) => setLeaveForm({ ...leaveForm, leave_type: e.target.value })}>{leaveTypes.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Start"><input type="date" value={dateOnly(leaveForm.start_date)} onChange={(e) => setLeaveForm({ ...leaveForm, start_date: e.target.value })} /></Field><Field label="End"><input type="date" value={dateOnly(leaveForm.end_date)} onChange={(e) => setLeaveForm({ ...leaveForm, end_date: e.target.value })} /></Field><Field label="Status"><select value={leaveForm.status} onChange={(e) => setLeaveForm({ ...leaveForm, status: e.target.value })}><option>Approved</option><option>Pending</option><option>Cancelled</option></select></Field></div><Field label="Reason"><textarea rows={3} value={leaveForm.reason} onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })} /></Field><button className="primary" onClick={saveLeaveRecord}>Save leave and deduct days</button></div></div><div className="card form-card"><h3>Add manpower by quantity</h3><div className="form-grid"><Field label="Shift"><select value={bulkPersonForm.shift} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, shift: e.target.value })}>{shiftNames.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Role"><select value={bulkPersonForm.role} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, role: e.target.value })}>{personnelRoles.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Section"><select value={bulkPersonForm.section} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, section: e.target.value })}>{workshopSections.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Qty"><input type="number" value={bulkPersonForm.qty} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, qty: Number(e.target.value) })} /></Field></div><button onClick={addBulkPersonnel}>Add vacant slots</button></div>{shiftNames.map(renderPersonnelShift)}<div className="grid-2"><div className="card"><h3>Current leave</h3><MiniTable rows={currentLeave} columns={[{ key: 'person_name', label: 'Name' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'Start' }, { key: 'end_date', label: 'End' }, { key: 'days', label: 'Days' }]} /></div><div className="card"><h3>Past leave history</h3><MiniTable rows={pastLeave} columns={[{ key: 'person_name', label: 'Name' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'Start' }, { key: 'end_date', label: 'End' }, { key: 'days', label: 'Days' }]} /></div></div></div>}
 
-          <div className="two-col spares-entry-grid">
-            <div className="card spares-request-sheet">
-              <h3>Spares request sheet</h3>
-              <p className="muted">Fleet number, date, requested by and full spares list. Use one line per item.</p>
-              <div className="form-grid compact">
-                <input placeholder="Fleet Number" value={orderForm.machine_fleet_no} onChange={(e) => setOrderForm({ ...orderForm, machine_fleet_no: e.target.value })} />
-                <input type="date" value={orderForm.request_date} onChange={(e) => setOrderForm({ ...orderForm, request_date: e.target.value })} />
-                <input placeholder="Requested by" value={orderForm.requested_by} onChange={(e) => setOrderForm({ ...orderForm, requested_by: e.target.value })} />
-                <select value={orderForm.machine_group} onChange={(e) => setOrderForm({ ...orderForm, machine_group: e.target.value })}>
-                  <option>Yellow Machine</option>
-                  <option>Truck</option>
-                  <option>Light Vehicle</option>
-                  <option>Plant</option>
-                  <option>Other</option>
-                </select>
-                <select value={orderForm.workshop_section} onChange={(e) => setOrderForm({ ...orderForm, workshop_section: e.target.value })}>
-                  <option>Mechanical</option>
-                  <option>Auto Electrical</option>
-                  <option>Hydraulics</option>
-                  <option>Tyres</option>
-                  <option>Service Bay</option>
-                  <option>Stores</option>
-                  <option>Workshop Admin</option>
-                </select>
-                <select value={orderForm.priority} onChange={(e) => setOrderForm({ ...orderForm, priority: e.target.value })}><option>Normal</option><option>Urgent</option><option>Critical</option></select>
-                <input placeholder="Main Part No" value={orderForm.part_no} onChange={(e) => setOrderForm({ ...orderForm, part_no: e.target.value })} />
-                <input placeholder="Main Description" value={orderForm.description} onChange={(e) => setOrderForm({ ...orderForm, description: e.target.value })} />
-                <input type="number" placeholder="Qty" value={orderForm.qty} onChange={(e) => setOrderForm({ ...orderForm, qty: e.target.value })} />
-                <select value={orderForm.order_type} onChange={(e) => setOrderForm({ ...orderForm, order_type: e.target.value })}><option>Not selected</option><option>Local Order</option><option>International Order</option></select>
-              </div>
-              <textarea className="big-textarea" placeholder={'Spares required - one item per line\nExample: 612600110540 - Oil filter - Qty 2\nExample: 154-15-12715 - Transmission seal kit - Qty 1'} value={orderForm.spares_items} onChange={(e) => setOrderForm({ ...orderForm, spares_items: e.target.value })}></textarea>
-              <div className="form-grid compact">
-                <select value={orderForm.workflow_stage} onChange={(e) => setOrderForm({ ...orderForm, workflow_stage: e.target.value, status: e.target.value })}>
-                  <option>Requested</option>
-                  <option>Awaiting Funding</option>
-                  <option>Funded</option>
-                  <option>Awaiting Delivery</option>
-                  <option>Delivered</option>
-                </select>
-                <input type="date" placeholder="ETA" value={orderForm.eta} onChange={(e) => setOrderForm({ ...orderForm, eta: e.target.value })} />
-                <input placeholder="Notes / supplier / quote ref" value={orderForm.notes} onChange={(e) => setOrderForm({ ...orderForm, notes: e.target.value })} />
-                <button className="primary" onClick={() => saveRow('spares_orders', { ...orderForm, status: orderForm.workflow_stage || 'Requested', funding_status: orderForm.workflow_stage === 'Funded' ? 'Funded' : orderForm.funding_status || 'Not funded' })}>Save Spares Request</button>
-              </div>
-            </div>
+      {tab === 'operations' && <div className="page-grid operations-page"><SectionTitle title="Operations and operator scores" subtitle="Separate operators by truck/yellow machines, record offences, damage, abuse photos, rough conditions and score history." /><div className="card form-card"><h3>Operator event / score sheet</h3><div className="form-grid"><Field label="Operator name"><input value={operationForm.operator_name} onChange={(e) => setOperationForm({ ...operationForm, operator_name: e.target.value })} /></Field><Field label="Employee No"><input value={operationForm.employee_no} onChange={(e) => setOperationForm({ ...operationForm, employee_no: e.target.value })} /></Field><Field label="Machine group"><select value={operationForm.machine_group} onChange={(e) => setOperationForm({ ...operationForm, machine_group: e.target.value })}><option>Truck</option><option>Yellow Machine</option></select></Field><Field label="Machine type"><select value={operationForm.machine_type} onChange={(e) => setOperationForm({ ...operationForm, machine_type: e.target.value })}>{operationMachineTypes.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Fleet"><input list="fleetList" value={operationForm.fleet_no} onChange={(e) => setOperationForm({ ...operationForm, fleet_no: e.target.value })} /></Field><Field label="Shift"><select value={operationForm.shift} onChange={(e) => setOperationForm({ ...operationForm, shift: e.target.value })}>{shiftNames.map((x) => <option key={x}>{x}</option>)}</select></Field><Field label="Score"><input type="number" value={operationForm.score} onChange={(e) => setOperationForm({ ...operationForm, score: Number(e.target.value) })} /></Field><Field label="Supervisor"><input value={operationForm.supervisor} onChange={(e) => setOperationForm({ ...operationForm, supervisor: e.target.value })} /></Field><Field label="Event date"><input type="date" value={dateOnly(operationForm.event_date)} onChange={(e) => setOperationForm({ ...operationForm, event_date: e.target.value })} /></Field></div><Field label="Offence / damage / abuse / rough working conditions"><textarea rows={4} value={operationForm.offence} onChange={(e) => setOperationForm({ ...operationForm, offence: e.target.value })} /></Field><Field label="Supervisor photo upload"><input type="file" accept="image/*" onChange={(e) => attachPhoto(e.target.files?.[0], (v) => setOperationForm((p) => ({ ...p, photo_data: v })))} /></Field>{operationForm.photo_data && <img className="thumb" src={operationForm.photo_data} alt="Operator event" />}<button className="primary" onClick={() => saveRow('operations', operationForm)}>Save operator event</button></div><div className="grid-2"><div className="card"><h3>Truck operators</h3><MiniTable rows={data.operations.filter((o) => String(o.machine_group).includes('Truck'))} columns={[{ key: 'operator_name', label: 'Operator' }, { key: 'machine_type', label: 'Machine Type' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'score', label: 'Score' }, { key: 'offence', label: 'Event' }, { key: 'supervisor', label: 'Supervisor' }]} /></div><div className="card"><h3>Yellow machine operators</h3><MiniTable rows={data.operations.filter((o) => String(o.machine_group).includes('Yellow'))} columns={[{ key: 'operator_name', label: 'Operator' }, { key: 'machine_type', label: 'Machine Type' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'score', label: 'Score' }, { key: 'offence', label: 'Event' }, { key: 'supervisor', label: 'Supervisor' }]} /></div></div></div>}
 
-            <div className="card parts-book-card">
-              <h3>PDF parts books</h3>
-              <p className="muted">Upload a PDF parts book. The app scans for likely part numbers and lets you click them into the order sheet.</p>
-              <div className="form-grid compact">
-                <input placeholder="Book title" value={partsBookForm.book_title} onChange={(e) => setPartsBookForm({ ...partsBookForm, book_title: e.target.value })} />
-                <select value={partsBookForm.machine_group} onChange={(e) => setPartsBookForm({ ...partsBookForm, machine_group: e.target.value })}>
-                  <option>Yellow Machine</option><option>Truck</option><option>Light Vehicle</option><option>Plant</option><option>Other</option>
-                </select>
-                <input placeholder="Machine type / model" value={partsBookForm.machine_type} onChange={(e) => setPartsBookForm({ ...partsBookForm, machine_type: e.target.value })} />
-                <input placeholder="Uploaded by" value={partsBookForm.uploaded_by} onChange={(e) => setPartsBookForm({ ...partsBookForm, uploaded_by: e.target.value })} />
-                <input placeholder="Notes / page / section" value={partsBookForm.notes} onChange={(e) => setPartsBookForm({ ...partsBookForm, notes: e.target.value })} />
-                <input type="file" accept="application/pdf,.pdf" onChange={(e) => attachPartsBook(e.target.files?.[0])} />
-              </div>
-              {partsBookForm.file_name && <p className="file-note"><b>Loaded:</b> {partsBookForm.file_name} · possible parts: {partsBookForm.extracted_count || currentBookParts.length}</p>}
-              <div className="part-chip-box">
-                {currentBookParts.map((part) => <button key={part} onClick={() => addPartToOrder(part)}>{part}</button>)}
-                {!currentBookParts.length && <span>No PDF part numbers extracted yet. Upload a parts book or type notes first.</span>}
-              </div>
-              <button className="primary" onClick={() => saveRow('parts_books', partsBookForm)}>Save Parts Book Index</button>
-            </div>
-          </div>
+      {tab === 'photos' && <div className="page-grid"><SectionTitle title="Photo evidence" subtitle="Upload photos against machines, breakdowns, tyre fitment, battery fitment or operator abuse/conditions." /><div className="card form-card"><div className="form-grid"><Field label="Fleet"><input list="fleetList" value={photoForm.fleet_no} onChange={(e) => setPhotoForm({ ...photoForm, fleet_no: e.target.value })} /></Field><Field label="Linked type"><select value={photoForm.linked_type} onChange={(e) => setPhotoForm({ ...photoForm, linked_type: e.target.value })}><option>Breakdown</option><option>Repair</option><option>Tyre</option><option>Battery</option><option>Operator</option><option>Service</option></select></Field><Field label="Caption"><input value={photoForm.caption} onChange={(e) => setPhotoForm({ ...photoForm, caption: e.target.value })} /></Field><Field label="Photo"><input type="file" accept="image/*" onChange={(e) => attachPhoto(e.target.files?.[0], (v) => setPhotoForm((p) => ({ ...p, image_data: v })))} /></Field></div>{photoForm.image_data && <img className="thumb" src={photoForm.image_data} alt="Preview" />}<button className="primary" onClick={() => saveRow('photo_logs', photoForm)}>Save photo</button></div><div className="photo-grid">{data.photo_logs.map((p) => <div className="photo-card" key={p.id}>{p.image_data && <img src={p.image_data} alt={p.caption || 'photo'} />}<b>{p.fleet_no}</b><span>{p.linked_type}</span><p>{p.caption}</p></div>)}</div></div>}
 
-          <div className="two-col">
-            <div className="card">
-              <h3>Stock item / stock availability</h3>
-              <div className="form-grid compact">
-                <input placeholder="Part No" value={spareForm.part_no} onChange={(e) => setSpareForm({ ...spareForm, part_no: e.target.value })} />
-                <input placeholder="Description" value={spareForm.description} onChange={(e) => setSpareForm({ ...spareForm, description: e.target.value })} />
-                <input placeholder="Section" value={spareForm.section} onChange={(e) => setSpareForm({ ...spareForm, section: e.target.value })} />
-                <select value={spareForm.machine_type} onChange={(e) => setSpareForm({ ...spareForm, machine_type: e.target.value })}><option>Yellow Machine</option><option>Truck</option><option>Light Vehicle</option><option>Plant</option><option>Other</option></select>
-                <input type="number" placeholder="Stock Qty" value={spareForm.stock_qty} onChange={(e) => setSpareForm({ ...spareForm, stock_qty: e.target.value })} />
-                <input type="number" placeholder="Minimum Qty" value={spareForm.min_qty} onChange={(e) => setSpareForm({ ...spareForm, min_qty: e.target.value })} />
-                <input placeholder="Supplier" value={spareForm.supplier} onChange={(e) => setSpareForm({ ...spareForm, supplier: e.target.value })} />
-                <button className="primary" onClick={() => saveRow('spares', spareForm)}>Save Stock</button>
-              </div>
-            </div>
-            <div className="card parts-lookup-card">
-              <h3>Saved parts book lookup</h3>
-              <p className="muted">Click a part number to add it to the request sheet.</p>
-              <div className="part-chip-box saved-parts">
-                {extractedBookParts.map((part) => <button key={part} onClick={() => addPartToOrder(part)}>{part}</button>)}
-                {!extractedBookParts.length && <span>No saved parts book indexes yet.</span>}
-              </div>
-            </div>
-          </div>
+      {tab === 'reports' && <div className="page-grid reports-page"><SectionTitle title="Reports" subtitle="Machine availability, breakdowns per department, fleet type, service history and submitted records." right={<input placeholder="Filter fleet..." value={reportFleet} onChange={(e) => setReportFleet(e.target.value)} />} /><div className="stats-grid mini"><StatCard title="Fleet Availability" value={`${departmentReport.length ? one(((data.fleet_machines.length - uniqueBy(openBreakdowns, 'fleet_no').length) / Math.max(1, data.fleet_machines.length)) * 100) : 0}%`} /><StatCard title="Breakdowns" value={openBreakdowns.length} tone="red" /><StatCard title="Services Due" value={servicesDue.length} tone="orange" /><StatCard title="Orders / Requests" value={data.spares_orders.length + data.tyre_orders.length + data.battery_orders.length} /></div><div className="grid-2"><div className="card"><h3>Breakdown per department</h3><MiniTable rows={departmentReport} columns={[{ key: 'department', label: 'Department' }, { key: 'total', label: 'Fleet' }, { key: 'breakdowns', label: 'Down' }, { key: 'services', label: 'Services' }, { key: 'availability', label: 'Avail %' }]} /></div><div className="card"><h3>Breakdown per fleet type</h3><MiniTable rows={typeReport} columns={[{ key: 'machine_type', label: 'Fleet Type' }, { key: 'total', label: 'Fleet' }, { key: 'breakdowns', label: 'Down' }, { key: 'availability', label: 'Avail %' }]} /></div><div className="card"><h3>Machine breakdown records</h3><MiniTable rows={reportRows.breakdowns} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'category', label: 'Type' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Worked By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></div><div className="card"><h3>Service history report</h3><MiniTable rows={reportRows.services} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'supervisor', label: 'Supervisor' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></div></div></div>}
 
-          <div className="spares-board">
-            <div className="workflow-column">
-              <h3>New requests</h3>
-              {renderOrderCards(requestedOrders, 'No new spares requests.')}
-            </div>
-            <div className="workflow-column">
-              <h3>Awaiting funding</h3>
-              {renderOrderCards(awaitingFundingOrders, 'No spares awaiting funding.')}
-            </div>
-            <div className="workflow-column">
-              <h3>Funded</h3>
-              {renderOrderCards(fundedOrders, 'No funded spares yet.')}
-            </div>
-            <div className="workflow-column">
-              <h3>Awaiting delivery / ETA</h3>
-              {renderOrderCards(awaitingDeliveryOrders, 'No deliveries waiting.')}
-            </div>
-          </div>
+      {tab === 'admin' && <div className="page-grid"><SectionTitle title="Admin control" subtitle="System sync, local queue and delete actions." /><div className="card"><h3>Connection</h3><p>Supabase: {isSupabaseConfigured ? 'Configured' : 'Not configured'} · Browser: {online ? 'Online' : 'Offline'} · Queue: {queueCount}</p><button className="primary" onClick={syncOfflineQueue}>Sync offline queue</button><button onClick={() => { localStorage.removeItem('turbo-workshop-snapshot'); setMessage('Local snapshot cleared. Refresh to reload from Supabase.') }}>Clear local snapshot</button></div><div className="card"><h3>Admin alerts</h3><MiniTable rows={[...data.spares_orders, ...data.tyre_orders, ...data.battery_orders].filter((o) => String(o.status || o.workflow_stage || '').toLowerCase().includes('request') || String(o.status || o.workflow_stage || '').toLowerCase().includes('awaiting'))} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'machine_fleet_no', label: 'Machine' }, { key: 'requested_by', label: 'Requested By' }, { key: 'reason', label: 'Reason' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status || r.workflow_stage} /> }]} /></div></div>}
 
-          <div className="two-col">
-            <div className="card">
-              <h3>Local orders</h3>
-              {renderOrderCards(localOrders, 'No local orders marked yet.')}
-            </div>
-            <div className="card">
-              <h3>International orders</h3>
-              {renderOrderCards(internationalOrders, 'No international orders marked yet.')}
-            </div>
-          </div>
-
-          <div className="two-col">
-            <div className="card">
-              <h3>Truck spares area</h3>
-              <MiniTable rows={truckOrders} columns={[{ key: 'request_date', label: 'Date' }, { key: 'machine_fleet_no', label: 'Fleet' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'requested_by', label: 'Requested By' }, { key: 'status', label: 'Status' }]} empty="No truck spares requests yet." />
-            </div>
-            <div className="card">
-              <h3>Yellow machine spares area</h3>
-              <MiniTable rows={yellowMachineOrders} columns={[{ key: 'request_date', label: 'Date' }, { key: 'machine_fleet_no', label: 'Fleet' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'requested_by', label: 'Requested By' }, { key: 'status', label: 'Status' }]} empty="No yellow machine spares requests yet." />
-            </div>
-          </div>
-
-          <h3>Stock availability</h3>
-          <MiniTable rows={data.spares} columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'section', label: 'Section' }, { key: 'machine_type', label: 'Area' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }, { key: 'order_status', label: 'Status' }]} />
-
-          <h3>All spares order records</h3>
-          <MiniTable rows={filteredSpareOrders} columns={[{ key: 'request_date', label: 'Date' }, { key: 'machine_fleet_no', label: 'Fleet' }, { key: 'machine_group', label: 'Area' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'qty', label: 'Qty' }, { key: 'requested_by', label: 'Requested By' }, { key: 'order_type', label: 'Order Type' }, { key: 'eta', label: 'ETA' }, { key: 'status', label: 'Status' }]} />
-
-          <h3>Saved PDF parts books</h3>
-          <MiniTable rows={data.parts_books} columns={[{ key: 'book_title', label: 'Book' }, { key: 'machine_group', label: 'Area' }, { key: 'machine_type', label: 'Machine Type' }, { key: 'file_name', label: 'File' }, { key: 'extracted_count', label: 'Parts Found' }, { key: 'uploaded_by', label: 'Uploaded By' }]} empty="No parts books saved yet." />
-        </section>
-      )}
-
-      {tab === 'personnel' && (
-        <section className="panel personnel-dark">
-          <SectionTitle title="Personnel Register, Shifts and Leave Control" subtitle="Shift 1, Shift 2 and Shift 3 manpower, managers, foremen, off schedule, leave balance and full leave history." />
-
-          <div className="personnel-hero">
-            <div>
-              <span className="eyebrow">WORKSHOP PERSONNEL CONTROL</span>
-              <h2>Live manpower board</h2>
-              <p>Use dropdowns, badges and Excel uploads to control who is on shift, who is off, who is on leave and how many people are available by trade.</p>
-            </div>
-            <div className="hero-badges">
-              <span>Managers: <b>{managers.length}/4</b></span>
-              <span>Foremen: <b>{foremenRegister.length}/2</b></span>
-              <span>Chargehands: <b>{chargehandsRegister.length}</b></span>
-              <span>People off: <b>{peopleOff.length}</b></span>
-            </div>
-          </div>
-
-          <div className="stats-grid compact-stats">
-            <StatCard label="Total Personnel" value={data.personnel.length} note="Loaded people and vacancies" icon="👥" tone="blue" />
-            <StatCard label="Active Today" value={activePersonnel.length} note="Employment status active" icon="✅" tone="green" />
-            <StatCard label="People Off" value={peopleOff.length} note="Leave, sick, off duty" icon="⚠️" tone="red" />
-            <StatCard label="Current Leave" value={currentLeave.length} note="Leave running today" icon="🏖️" tone="orange" />
-            <StatCard label="Upcoming Leave" value={upcomingLeave.length} note="Future leave records" icon="📅" tone="grey" />
-            <StatCard label="Past Leave" value={pastLeave.length} note="History available" icon="🕘" tone="grey" />
-          </div>
-
-          <div className="toolbar personnel-toolbar">
-            <input className="search" placeholder="Search name, employee no, shift, trade, section..." value={personnelSearch} onChange={(e) => setPersonnelSearch(e.target.value)} />
-            <select value={personnelShiftFilter} onChange={(e) => setPersonnelShiftFilter(e.target.value)}>
-              <option>All</option>
-              {shiftNames.map((shift) => <option key={shift}>{shift}</option>)}
-            </select>
-            <button className="ghost" onClick={() => { setPersonnelSearch(''); setPersonnelShiftFilter('All') }}>Clear filters</button>
-            {isAdmin && <label className="upload">Upload Personnel / Leave Excel<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadPersonnel(e.target.files?.[0])} /></label>}
-          </div>
-
-          <div className="shift-grid">
-            {shiftNames.map((shift) => renderShiftPanel(shift))}
-          </div>
-
-          <div className="two-col">
-            <div className="card dark-card">
-              <h3>Add / update employee</h3>
-              <div className="form-grid compact">
-                <input placeholder="Employee No / Clock No" value={personForm.employee_no} onChange={(e) => setPersonForm({ ...personForm, employee_no: e.target.value })} />
-                <input placeholder="Full Name" value={personForm.name} onChange={(e) => setPersonForm({ ...personForm, name: e.target.value })} />
-                <select value={personForm.shift} onChange={(e) => setPersonForm({ ...personForm, shift: e.target.value })}>{shiftNames.map((shift) => <option key={shift}>{shift}</option>)}</select>
-                <select value={personForm.section} onChange={(e) => setPersonForm({ ...personForm, section: e.target.value })}>{personnelSections.map((section) => <option key={section}>{section}</option>)}</select>
-                <select value={personForm.role} onChange={(e) => setPersonForm({ ...personForm, role: e.target.value, staff_group: e.target.value === 'Manager' ? 'Management' : e.target.value === 'Foreman' ? 'Foreman' : personForm.staff_group })}>{workshopRoles.map((role) => <option key={role}>{role}</option>)}</select>
-                <select value={personForm.staff_group} onChange={(e) => setPersonForm({ ...personForm, staff_group: e.target.value })}>
-                  <option>Workshop Staff</option><option>Management</option><option>Foreman</option><option>Chargehand</option><option>Support</option>
-                </select>
-                <input placeholder="Phone" value={personForm.phone} onChange={(e) => setPersonForm({ ...personForm, phone: e.target.value })} />
-                <select value={personForm.employment_status} onChange={(e) => setPersonForm({ ...personForm, employment_status: e.target.value })}>
-                  <option>Active</option><option>On leave</option><option>Off Duty</option><option>Sick Leave</option><option>Suspended</option><option>Vacant</option><option>Left company</option>
-                </select>
-                <input type="number" placeholder="Leave balance days" value={personForm.leave_balance_days} onChange={(e) => setPersonForm({ ...personForm, leave_balance_days: e.target.value })} />
-                <input type="number" placeholder="Leave taken days" value={personForm.leave_taken_days} onChange={(e) => setPersonForm({ ...personForm, leave_taken_days: e.target.value })} />
-                <input placeholder="Notes" value={personForm.notes || ''} onChange={(e) => setPersonForm({ ...personForm, notes: e.target.value })} />
-                <button className="primary" onClick={() => saveRow('personnel', { ...personForm, leave_balance_days: one(personForm.leave_balance_days), leave_taken_days: one(personForm.leave_taken_days) }, 'upsert')}>Save Employee</button>
-              </div>
-            </div>
-
-            <div className="card dark-card">
-              <h3>Add manpower by quantity</h3>
-              <p className="muted">Use this to add vacant slots or planned positions by shift/trade, then rename them to real employees later.</p>
-              <div className="form-grid compact">
-                <select value={bulkPersonForm.shift} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, shift: e.target.value })}>{shiftNames.map((shift) => <option key={shift}>{shift}</option>)}</select>
-                <select value={bulkPersonForm.section} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, section: e.target.value })}>{personnelSections.map((section) => <option key={section}>{section}</option>)}</select>
-                <select value={bulkPersonForm.role} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, role: e.target.value })}>{workshopRoles.map((role) => <option key={role}>{role}</option>)}</select>
-                <input type="number" min="1" placeholder="Quantity" value={bulkPersonForm.qty} onChange={(e) => setBulkPersonForm({ ...bulkPersonForm, qty: e.target.value })} />
-                <button className="primary" onClick={addBulkPersonnel}>Add Quantity</button>
-              </div>
-              <div className="target-boxes">
-                <span className={managers.length === 4 ? 'ok' : 'warn'}>Managers target: {managers.length}/4</span>
-                <span className={foremenRegister.length === 2 ? 'ok' : 'warn'}>Foremen target: {foremenRegister.length}/2</span>
-              </div>
-            </div>
-          </div>
-
-          <div className="two-col">
-            <div className="card dark-card">
-              <h3>Leave / off schedule entry</h3>
-              <div className="form-grid compact">
-                <input list="personnel-names" placeholder="Employee name" value={leaveForm.person_name} onChange={(e) => selectPersonForLeave(e.target.value)} />
-                <datalist id="personnel-names">{data.personnel.map((p) => <option key={p.id} value={p.name} />)}</datalist>
-                <input placeholder="Employee No" value={leaveForm.employee_no} onChange={(e) => setLeaveForm({ ...leaveForm, employee_no: e.target.value })} />
-                <select value={leaveForm.leave_type} onChange={(e) => setLeaveForm({ ...leaveForm, leave_type: e.target.value })}>{leaveTypes.map((type) => <option key={type}>{type}</option>)}</select>
-                <input type="date" value={leaveForm.start_date} onChange={(e) => setLeaveForm({ ...leaveForm, start_date: e.target.value })} />
-                <input type="date" value={leaveForm.end_date} onChange={(e) => setLeaveForm({ ...leaveForm, end_date: e.target.value })} />
-                <select value={leaveForm.status} onChange={(e) => setLeaveForm({ ...leaveForm, status: e.target.value })}><option>Approved</option><option>Pending</option><option>Cancelled</option></select>
-                <input placeholder="Reason / notes" value={leaveForm.reason} onChange={(e) => setLeaveForm({ ...leaveForm, reason: e.target.value })} />
-                <button className="primary" onClick={saveLeaveRecord}>Save Leave / Off Record</button>
-              </div>
-              <div className="leave-preview">Days selected: <b>{daysInclusive(leaveForm.start_date, leaveForm.end_date)}</b></div>
-            </div>
-
-            <div className="card dark-card">
-              <h3>Managers and foremen</h3>
-              <div className="manager-grid">
-                <div><b>Managers</b><MiniTable rows={managers} columns={[{ key: 'name', label: 'Name' }, { key: 'shift', label: 'Shift' }, { key: 'phone', label: 'Phone' }, { key: 'employment_status', label: 'Status' }]} empty="No managers loaded yet." /></div>
-                <div><b>Foremen / Chargehands</b><MiniTable rows={[...foremenRegister, ...chargehandsRegister]} columns={[{ key: 'name', label: 'Name' }, { key: 'shift', label: 'Shift' }, { key: 'role', label: 'Role' }, { key: 'employment_status', label: 'Status' }]} empty="No foremen or chargehands loaded yet." /></div>
-              </div>
-            </div>
-          </div>
-
-          <div className="two-col">
-            <div className="card dark-card">
-              <h3>Current leave / off now</h3>
-              <MiniTable rows={currentLeave} columns={[{ key: 'person_name', label: 'Name' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'days', label: 'Days' }, { key: 'status', label: 'Status' }]} empty="No current leave today." />
-            </div>
-            <div className="card dark-card">
-              <h3>Upcoming leave</h3>
-              <MiniTable rows={upcomingLeave.slice(0, 12)} columns={[{ key: 'person_name', label: 'Name' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'days', label: 'Days' }, { key: 'status', label: 'Status' }]} empty="No upcoming leave loaded." />
-            </div>
-          </div>
-
-          <div className="card dark-card">
-            <h3>Full personnel register</h3>
-            <MiniTable rows={filteredPersonnel} columns={[{ key: 'employee_no', label: 'Emp No' }, { key: 'name', label: 'Name' }, { key: 'shift', label: 'Shift' }, { key: 'section', label: 'Section' }, { key: 'role', label: 'Role' }, { key: 'phone', label: 'Phone' }, { key: 'employment_status', label: 'Status' }, { key: 'leave_balance_days', label: 'Leave Bal' }, { key: 'leave_taken_days', label: 'Taken' }]} />
-            <div className="person-actions">
-              {filteredPersonnel.slice(0, 30).map((person) => (
-                <div className="person-action-row" key={`act-${person.id}`}>
-                  <span>{person.name} · {person.shift} · {person.role}</span>
-                  <div>
-                    <button onClick={() => { setPersonForm({ ...person }); window.scrollTo({ top: 0, behavior: 'smooth' }) }}>Edit</button>
-                    <button onClick={() => clearPersonStatus(person)}>Mark active</button>
-                    {isAdmin && <button className="danger" onClick={() => deleteRow('personnel', person.id)}>Remove</button>}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <div className="two-col">
-            <div className="card dark-card">
-              <h3>Past leave history</h3>
-              <MiniTable rows={pastLeave} columns={[{ key: 'person_name', label: 'Name' }, { key: 'employee_no', label: 'Emp No' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'days', label: 'Days' }, { key: 'reason', label: 'Reason' }]} empty="No past leave history yet." />
-            </div>
-            <div className="card dark-card">
-              <h3>Off schedule</h3>
-              <MiniTable rows={offSchedule} columns={[{ key: 'person_name', label: 'Name' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'reason', label: 'Reason' }, { key: 'status', label: 'Status' }]} empty="No off schedule records yet." />
-            </div>
-          </div>
-
-          <div className="card dark-card">
-            <h3>Work hours log</h3>
-            <div className="form-grid compact">
-              <input list="personnel-names" placeholder="Person name" value={workForm.person_name} onChange={(e) => setWorkForm({ ...workForm, person_name: e.target.value })} />
-              <input placeholder="Fleet No" value={workForm.fleet_no} onChange={(e) => setWorkForm({ ...workForm, fleet_no: e.target.value })} />
-              <select value={workForm.section} onChange={(e) => setWorkForm({ ...workForm, section: e.target.value })}>{personnelSections.map((section) => <option key={section}>{section}</option>)}</select>
-              <input type="date" value={workForm.work_date} onChange={(e) => setWorkForm({ ...workForm, work_date: e.target.value })} />
-              <input type="number" placeholder="Hours worked" value={workForm.hours_worked} onChange={(e) => setWorkForm({ ...workForm, hours_worked: e.target.value })} />
-              <select value={workForm.work_type} onChange={(e) => setWorkForm({ ...workForm, work_type: e.target.value })}><option>Repair</option><option>Service</option><option>Breakdown</option><option>Inspection</option><option>Tyre</option><option>Battery</option></select>
-              <input placeholder="Notes" value={workForm.notes} onChange={(e) => setWorkForm({ ...workForm, notes: e.target.value })} />
-              <button className="primary" onClick={() => saveRow('work_logs', { ...workForm, hours_worked: one(workForm.hours_worked) })}>Save Hours</button>
-            </div>
-            <MiniTable rows={data.work_logs} columns={[{ key: 'person_name', label: 'Person' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'section', label: 'Section' }, { key: 'work_date', label: 'Date' }, { key: 'hours_worked', label: 'Hours' }, { key: 'work_type', label: 'Type' }]} />
-          </div>
-        </section>
-      )}
-
-      {tab === 'tyres' && (
-        <section className="panel">
-          <SectionTitle title="Tyre Register" subtitle="Track tyre serial numbers, fitment dates, machine, position and expected replacement hours." />
-          <div className="form-grid">
-            <input placeholder="Tyre Serial No" value={tyreForm.serial_no} onChange={(e) => setTyreForm({ ...tyreForm, serial_no: e.target.value })} />
-            <input placeholder="Fleet No" value={tyreForm.fleet_no} onChange={(e) => setTyreForm({ ...tyreForm, fleet_no: e.target.value })} />
-            <input placeholder="Position" value={tyreForm.position} onChange={(e) => setTyreForm({ ...tyreForm, position: e.target.value })} />
-            <input placeholder="Brand" value={tyreForm.brand} onChange={(e) => setTyreForm({ ...tyreForm, brand: e.target.value })} />
-            <input placeholder="Size" value={tyreForm.size} onChange={(e) => setTyreForm({ ...tyreForm, size: e.target.value })} />
-            <input type="date" value={tyreForm.fitment_date} onChange={(e) => setTyreForm({ ...tyreForm, fitment_date: e.target.value })} />
-            <input type="number" placeholder="Fitment hours" value={tyreForm.fitment_hours} onChange={(e) => setTyreForm({ ...tyreForm, fitment_hours: e.target.value })} />
-            <input type="number" placeholder="Expected life hours" value={tyreForm.expected_life_hours} onChange={(e) => setTyreForm({ ...tyreForm, expected_life_hours: e.target.value })} />
-            <select value={tyreForm.status} onChange={(e) => setTyreForm({ ...tyreForm, status: e.target.value })}><option>Fitted</option><option>In stock</option><option>Removed</option><option>Scrapped</option><option>Needs replacement</option></select>
-            <button className="primary" onClick={() => saveRow('tyres', { ...tyreForm, estimated_replacement_hours: n(tyreForm.fitment_hours) + n(tyreForm.expected_life_hours) })}>Save Tyre</button>
-          </div>
-          <MiniTable rows={data.tyres} columns={[{ key: 'serial_no', label: 'Serial' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'position', label: 'Position' }, { key: 'fitment_date', label: 'Fitted' }, { key: 'fitment_hours', label: 'Fit Hrs' }, { key: 'estimated_replacement_hours', label: 'Replace Hrs' }, { key: 'status', label: 'Status' }]} />
-        </section>
-      )}
-
-      {tab === 'batteries' && (
-        <section className="panel">
-          <SectionTitle title="Battery Register" subtitle="Track battery serial numbers, where fitted, condition, warranty and replacement reminders." />
-          <div className="form-grid">
-            <input placeholder="Battery Serial No" value={batteryForm.serial_no} onChange={(e) => setBatteryForm({ ...batteryForm, serial_no: e.target.value })} />
-            <input placeholder="Fleet No" value={batteryForm.fleet_no} onChange={(e) => setBatteryForm({ ...batteryForm, fleet_no: e.target.value })} />
-            <input placeholder="Volts" value={batteryForm.volts} onChange={(e) => setBatteryForm({ ...batteryForm, volts: e.target.value })} />
-            <input placeholder="CCA" value={batteryForm.cca} onChange={(e) => setBatteryForm({ ...batteryForm, cca: e.target.value })} />
-            <input type="date" value={batteryForm.fitment_date} onChange={(e) => setBatteryForm({ ...batteryForm, fitment_date: e.target.value })} />
-            <input type="date" value={batteryForm.warranty_end} onChange={(e) => setBatteryForm({ ...batteryForm, warranty_end: e.target.value })} />
-            <input type="number" placeholder="Expected life months" value={batteryForm.expected_life_months} onChange={(e) => setBatteryForm({ ...batteryForm, expected_life_months: e.target.value })} />
-            <select value={batteryForm.status} onChange={(e) => setBatteryForm({ ...batteryForm, status: e.target.value })}><option>Fitted</option><option>In stock</option><option>Charging</option><option>Removed</option><option>Scrapped</option><option>Needs replacement</option></select>
-            <input placeholder="Notes" value={batteryForm.notes} onChange={(e) => setBatteryForm({ ...batteryForm, notes: e.target.value })} />
-            <button className="primary" onClick={() => saveRow('batteries', batteryForm)}>Save Battery</button>
-          </div>
-          <MiniTable rows={data.batteries} columns={[{ key: 'serial_no', label: 'Serial' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'volts', label: 'Volts' }, { key: 'cca', label: 'CCA' }, { key: 'fitment_date', label: 'Fitted' }, { key: 'warranty_end', label: 'Warranty' }, { key: 'status', label: 'Status' }]} />
-        </section>
-      )}
-
-      {tab === 'photos' && (
-        <section className="panel">
-          <SectionTitle title="Photos and Evidence" subtitle="Upload photos from phone or laptop against a machine, breakdown, tyre, battery or repair." />
-          <div className="form-grid">
-            <input placeholder="Fleet No" value={photoForm.fleet_no} onChange={(e) => setPhotoForm({ ...photoForm, fleet_no: e.target.value })} />
-            <select value={photoForm.linked_type} onChange={(e) => setPhotoForm({ ...photoForm, linked_type: e.target.value })}><option>Breakdown</option><option>Repair</option><option>Service</option><option>Tyre</option><option>Battery</option><option>Inspection</option></select>
-            <input placeholder="Caption" value={photoForm.caption} onChange={(e) => setPhotoForm({ ...photoForm, caption: e.target.value })} />
-            <input type="file" accept="image/*" capture="environment" onChange={(e) => attachPhoto(e.target.files?.[0])} />
-            <button className="primary" onClick={() => saveRow('photo_logs', photoForm)}>Save Photo</button>
-          </div>
-          <div className="photo-grid">
-            {data.photo_logs.map((p) => (
-              <div className="photo-card" key={p.id}>
-                {p.image_data ? <img src={p.image_data} alt={p.caption || p.fleet_no} /> : <div className="empty-img">No image</div>}
-                <b>{p.fleet_no}</b>
-                <span>{p.linked_type}</span>
-                <p>{p.caption}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {tab === 'reports' && (
-        <section className="panel printable">
-          <SectionTitle title="Reports" subtitle="Build a quick machine history report and print/save as PDF from the browser." />
-          <div className="toolbar no-print">
-            <input className="search" placeholder="Fleet number for report..." value={reportFleet} onChange={(e) => setReportFleet(e.target.value)} />
-            <button className="primary" onClick={() => window.print()}>Print / Save PDF</button>
-          </div>
-          <div className="report-header">
-            <h2>Machine History Report {reportFleet ? `- ${reportFleet}` : ''}</h2>
-            <p>Generated: {new Date().toLocaleString()}</p>
-          </div>
-          <h3>Breakdowns</h3>
-          <MiniTable rows={reportRows.breakdowns} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'fault', label: 'Fault' }, { key: 'cause', label: 'Cause' }, { key: 'downtime_hours', label: 'Down Hrs' }, { key: 'status', label: 'Status' }]} />
-          <h3>Repairs</h3>
-          <MiniTable rows={reportRows.repairs} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'fault', label: 'Repair' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'hours_worked', label: 'Hours' }, { key: 'status', label: 'Status' }]} />
-          <h3>Services</h3>
-          <MiniTable rows={reportRows.services} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'scheduled_hours', label: 'Due Hrs' }, { key: 'due_date', label: 'Due Date' }, { key: 'status', label: 'Status' }]} />
-          <h3>Personnel Hours</h3>
-          <MiniTable rows={reportRows.work} columns={[{ key: 'person_name', label: 'Person' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'work_date', label: 'Date' }, { key: 'hours_worked', label: 'Hours' }, { key: 'work_type', label: 'Type' }]} />
-          <h3>Leave History</h3>
-          <MiniTable rows={reportRows.leave} columns={[{ key: 'person_name', label: 'Person' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'From' }, { key: 'end_date', label: 'To' }, { key: 'days', label: 'Days' }, { key: 'reason', label: 'Reason' }]} />
-        </section>
-      )}
-
-      {tab === 'admin' && (
-        <section className="panel">
-          <SectionTitle title="Admin Controls" subtitle="Upload data, sync offline records, and manage admin-only actions." />
-          {!isAdmin && <div className="message warn-msg">You are signed in as a user. Admin controls are locked.</div>}
-          <div className="stats-grid">
-            <StatCard label="Supabase" value={isSupabaseConfigured ? 'Configured' : 'Not set'} note="Uses env variables" />
-            <StatCard label="Internet" value={online ? 'Online' : 'Offline'} note="Offline queue active" />
-            <StatCard label="Pending Queue" value={queueCount} note="Records waiting to upload" />
-            <StatCard label="Local Snapshot" value="Enabled" note="Works on phone/laptop browser" />
-          </div>
-          <div className="toolbar">
-            <button className="primary" onClick={syncOfflineQueue}>Sync Offline Queue</button>
-            <button className="ghost" onClick={loadAll}>Reload From Supabase</button>
-            {isAdmin && <label className="upload">Upload Fleet Excel<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadFleet(e.target.files?.[0])} /></label>}
-            {isAdmin && <label className="upload">Upload Service Schedule<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadService(e.target.files?.[0])} /></label>}
-            {isAdmin && <label className="upload">Upload Personnel / Leave<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => uploadPersonnel(e.target.files?.[0])} /></label>}
-          </div>
-          <div className="card">
-            <h3>Important</h3>
-            <p>This starter login gate is practical for workshop testing. For strict company security, upgrade the login to Supabase Auth before giving access outside the workshop.</p>
-            <p>Photos are stored as browser image data in the database for this quick version. For heavy daily photo use, move photos to Supabase Storage in the next upgrade.</p>
-          </div>
-        </section>
-      )}
-    </main>
-  )
+      <datalist id="fleetList">{data.fleet_machines.map((m) => <option key={m.fleet_no} value={m.fleet_no}>{m.machine_type}</option>)}</datalist>
+      {modal && <Modal title={modal.title} onClose={() => setModal(null)}>{modal.body}</Modal>}
+    </section>
+  </main>
 }
