@@ -50,190 +50,29 @@ type ImportItem = {
 }
 
 const IMPORTS: ImportItem[] = [
-  {
-    table: 'fleet_machines',
-    label: 'Fleet Register',
-    description: 'Machines, departments, hours, mileage and status.',
-    mode: 'upsert',
-    conflictKey: 'fleet_no',
-    qualityKeys: ['fleet_no']
-  },
-  {
-    table: 'personnel',
-    label: 'Personnel Register',
-    description: 'Employees, shifts, trades, sections and leave balances.',
-    mode: 'upsert',
-    conflictKey: 'id',
-    qualityKeys: ['name', 'employee_no']
-  },
-  {
-    table: 'leave_records',
-    label: 'Leave / Off Schedule',
-    description: 'Current, upcoming and past leave records.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['person_name', 'employee_no']
-  },
-  {
-    table: 'services',
-    label: 'Service Schedule',
-    description: 'Due services, service history, supervisors and job cards.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['fleet_no', 'service_type']
-  },
-  {
-    table: 'breakdowns',
-    label: 'Breakdowns',
-    description: 'Breakdown reports, faults, spares ETA and assigned fitters.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['fleet_no', 'fault']
-  },
-  {
-    table: 'repairs',
-    label: 'Repairs / Job Cards',
-    description: 'Repair jobs, job cards, parts used and who worked on the machine.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['fleet_no', 'fault', 'job_card_no']
-  },
-  {
-    table: 'spares',
-    label: 'Spares Stock',
-    description: 'Part numbers, stock quantity, minimum stock, suppliers and shelves.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['part_no', 'description']
-  },
-  {
-    table: 'spares_orders',
-    label: 'Spares Orders',
-    description: 'Requests, awaiting funding, funded, local/international orders and ETA.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['machine_fleet_no', 'part_no', 'description', 'spares_items']
-  },
-  {
-    table: 'tyres',
-    label: 'Tyres Register',
-    description: 'Tyre make, serial, company number, fleet fitment and reminder dates.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['serial_no', 'company_no', 'fleet_no']
-  },
-  {
-    table: 'tyre_measurements',
-    label: 'Tyre Measurements',
-    description: 'Tread depth, pressure, condition and repair checks.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['tyre_serial_no', 'fleet_no']
-  },
-  {
-    table: 'tyre_orders',
-    label: 'Tyre Orders',
-    description: 'Tyres to quote/order against fleet numbers.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['fleet_no', 'tyre_type', 'size']
-  },
-  {
-    table: 'batteries',
-    label: 'Battery Register',
-    description: 'Battery make, serial, fleet, voltage, fitment and maintenance reminders.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['serial_no', 'fleet_no']
-  },
-  {
-    table: 'battery_orders',
-    label: 'Battery Orders',
-    description: 'Battery order requests against machines.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['fleet_no', 'battery_type', 'voltage']
-  },
-  {
-    table: 'operations',
-    label: 'Operations / Operators',
-    description: 'Operator history, machine type, score, offences and damages.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['operator_name', 'fleet_no']
-  },
-  {
-    table: 'hoses',
-    label: 'Hose Stock',
-    description: 'Hose and fitting stock levels.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['hose_no', 'hose_type', 'size']
-  },
-  {
-    table: 'hose_requests',
-    label: 'Hose Requests',
-    description: 'Bulk hose requests and individual hose repairs.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['fleet_no', 'hose_type', 'requested_by']
-  },
-  {
-    table: 'tools',
-    label: 'Tools Inventory',
-    description: 'Workshop tools, quantities, brands and condition.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['tool_name', 'serial_no']
-  },
-  {
-    table: 'tool_orders',
-    label: 'Tool Orders',
-    description: 'Requests to order tools.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['tool_name', 'requested_by']
-  },
-  {
-    table: 'employee_tools',
-    label: 'Employee Issued Tools',
-    description: 'Tools issued to employees and return records.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['employee_name', 'tool_name']
-  },
-  {
-    table: 'fabrication_stock',
-    label: 'Boiler/Panel Stock',
-    description: 'Material stock for boiler shop and panel beaters.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['description', 'material_type']
-  },
-  {
-    table: 'fabrication_requests',
-    label: 'Boiler/Panel Requests',
-    description: 'Material requests booked to machines and projects.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['description', 'fleet_no', 'project_name']
-  },
-  {
-    table: 'fabrication_projects',
-    label: 'Boiler/Panel Projects',
-    description: 'Major ongoing boiler shop and panel beating projects.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['project_name', 'fleet_no']
-  },
-  {
-    table: 'photo_logs',
-    label: 'Photo Captions Register',
-    description: 'Excel captions only. Actual photos still upload in the Photos page.',
-    mode: 'insert',
-    conflictKey: 'id',
-    qualityKeys: ['fleet_no', 'caption']
-  }
+  { table: 'fleet_machines', label: 'Fleet Register', description: 'Machines, departments, hours, mileage and status.', mode: 'upsert', conflictKey: 'fleet_no', qualityKeys: ['fleet_no'] },
+  { table: 'personnel', label: 'Personnel Register', description: 'Employees, shifts, trades, sections and leave balances.', mode: 'upsert', conflictKey: 'id', qualityKeys: ['name', 'employee_no'] },
+  { table: 'leave_records', label: 'Leave / Off Schedule', description: 'Current, upcoming and past leave records.', mode: 'insert', conflictKey: 'id', qualityKeys: ['person_name', 'employee_no'] },
+  { table: 'services', label: 'Service Schedule', description: 'Due services, service history, supervisors and job cards.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'service_type'] },
+  { table: 'breakdowns', label: 'Breakdowns', description: 'Breakdown reports, faults, spares ETA and assigned fitters.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'fault'] },
+  { table: 'repairs', label: 'Repairs / Job Cards', description: 'Repair jobs, job cards, parts used and who worked on the machine.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'fault', 'job_card_no'] },
+  { table: 'spares', label: 'Spares Stock', description: 'Part numbers, stock quantity, minimum stock, suppliers and shelves.', mode: 'insert', conflictKey: 'id', qualityKeys: ['part_no', 'description'] },
+  { table: 'spares_orders', label: 'Spares Orders', description: 'Requests, awaiting funding, funded, local/international orders and ETA.', mode: 'insert', conflictKey: 'id', qualityKeys: ['machine_fleet_no', 'part_no', 'description', 'spares_items'] },
+  { table: 'tyres', label: 'Tyres Register', description: 'Tyre make, serial, company number, fleet fitment and reminder dates.', mode: 'insert', conflictKey: 'id', qualityKeys: ['serial_no', 'company_no', 'fleet_no'] },
+  { table: 'tyre_measurements', label: 'Tyre Measurements', description: 'Tread depth, pressure, condition and repair checks.', mode: 'insert', conflictKey: 'id', qualityKeys: ['tyre_serial_no', 'fleet_no'] },
+  { table: 'tyre_orders', label: 'Tyre Orders', description: 'Tyres to quote/order against fleet numbers.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'tyre_type', 'size'] },
+  { table: 'batteries', label: 'Battery Register', description: 'Battery make, serial, fleet, voltage, fitment and maintenance reminders.', mode: 'insert', conflictKey: 'id', qualityKeys: ['serial_no', 'fleet_no'] },
+  { table: 'battery_orders', label: 'Battery Orders', description: 'Battery order requests against machines.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'battery_type', 'voltage'] },
+  { table: 'operations', label: 'Operations / Operators', description: 'Operator history, machine type, score, offences and damages.', mode: 'insert', conflictKey: 'id', qualityKeys: ['operator_name', 'fleet_no'] },
+  { table: 'hoses', label: 'Hose Stock', description: 'Hose and fitting stock levels.', mode: 'insert', conflictKey: 'id', qualityKeys: ['hose_no', 'hose_type', 'size'] },
+  { table: 'hose_requests', label: 'Hose Requests', description: 'Bulk hose requests and individual hose repairs.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'hose_type', 'requested_by'] },
+  { table: 'tools', label: 'Tools Inventory', description: 'Workshop tools, quantities, brands and condition.', mode: 'insert', conflictKey: 'id', qualityKeys: ['tool_name', 'serial_no'] },
+  { table: 'tool_orders', label: 'Tool Orders', description: 'Requests to order tools.', mode: 'insert', conflictKey: 'id', qualityKeys: ['tool_name', 'requested_by'] },
+  { table: 'employee_tools', label: 'Employee Issued Tools', description: 'Tools issued to employees and return records.', mode: 'insert', conflictKey: 'id', qualityKeys: ['employee_name', 'tool_name'] },
+  { table: 'fabrication_stock', label: 'Boiler/Panel Stock', description: 'Material stock for boiler shop and panel beaters.', mode: 'insert', conflictKey: 'id', qualityKeys: ['description', 'material_type'] },
+  { table: 'fabrication_requests', label: 'Boiler/Panel Requests', description: 'Material requests booked to machines and projects.', mode: 'insert', conflictKey: 'id', qualityKeys: ['description', 'fleet_no', 'project_name'] },
+  { table: 'fabrication_projects', label: 'Boiler/Panel Projects', description: 'Major ongoing boiler shop and panel beating projects.', mode: 'insert', conflictKey: 'id', qualityKeys: ['project_name', 'fleet_no'] },
+  { table: 'photo_logs', label: 'Photo Captions Register', description: 'Excel captions only. Actual photos still upload in the Photos page.', mode: 'insert', conflictKey: 'id', qualityKeys: ['fleet_no', 'caption'] }
 ]
 
 const SCHEMAS: Record<TableName, FieldDef[]> = {
@@ -323,11 +162,11 @@ const SCHEMAS: Record<TableName, FieldDef[]> = {
     { key: 'notes', aliases: ['notes', 'remarks'] }
   ],
   personnel: [
-    { key: 'employee_no', aliases: ['employee no', 'emp no', 'clock no', 'staff no'] },
-    { key: 'name', aliases: ['name', 'employee name', 'employee', 'worker', 'person'] },
+    { key: 'employee_no', aliases: ['employee no', 'emp no', 'clock no', 'staff no', 'code', 'employee code'] },
+    { key: 'name', aliases: ['name', 'employee name', 'employee', 'worker', 'person', 'full name'] },
     { key: 'shift', aliases: ['shift'], fallback: 'Shift 1' },
     { key: 'section', aliases: ['section', 'department', 'dept'], fallback: 'Workshop' },
-    { key: 'role', aliases: ['role', 'trade', 'position', 'job title'], fallback: 'Diesel Plant Fitter' },
+    { key: 'role', aliases: ['role', 'trade', 'position', 'job title', 'occupation', 'current job title'], fallback: 'Diesel Plant Fitter' },
     { key: 'staff_group', aliases: ['staff group', 'group'], fallback: 'Workshop Staff' },
     { key: 'phone', aliases: ['phone', 'cell', 'mobile'] },
     { key: 'employment_status', aliases: ['employment status', 'status'], fallback: 'Active' },
@@ -336,15 +175,15 @@ const SCHEMAS: Record<TableName, FieldDef[]> = {
     { key: 'notes', aliases: ['notes', 'remarks'] }
   ],
   leave_records: [
-    { key: 'employee_no', aliases: ['employee no', 'emp no', 'clock no'] },
-    { key: 'person_name', aliases: ['person name', 'employee name', 'name', 'employee'] },
+    { key: 'employee_no', aliases: ['employee no', 'emp no', 'clock no', 'code', 'employee code'] },
+    { key: 'person_name', aliases: ['person name', 'employee name', 'name', 'employee', 'full name'] },
     { key: 'shift', aliases: ['shift'], fallback: 'Shift 1' },
     { key: 'section', aliases: ['section', 'department'] },
-    { key: 'role', aliases: ['role', 'trade', 'position'] },
+    { key: 'role', aliases: ['role', 'trade', 'position', 'occupation', 'current job title'] },
     { key: 'leave_type', aliases: ['leave type', 'type'], fallback: 'Annual Leave' },
     { key: 'start_date', aliases: ['start date', 'leave start', 'from'], type: 'date' },
     { key: 'end_date', aliases: ['end date', 'leave end', 'to'], type: 'date' },
-    { key: 'days', aliases: ['days', 'total days'], type: 'number' },
+    { key: 'days', aliases: ['days', 'total days', 'total'], type: 'number' },
     { key: 'reason', aliases: ['reason'] },
     { key: 'status', aliases: ['status'], fallback: 'Approved' }
   ],
@@ -590,10 +429,20 @@ function dateOnly(value: any) {
     }
   }
 
-  const d = new Date(value)
+  const text = String(value).trim()
+
+  const dotDate = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/)
+  if (dotDate) {
+    const dd = dotDate[1].padStart(2, '0')
+    const mm = dotDate[2].padStart(2, '0')
+    const yyyy = dotDate[3].length === 2 ? `20${dotDate[3]}` : dotDate[3]
+    return `${yyyy}-${mm}-${dd}`
+  }
+
+  const d = new Date(text)
   if (!Number.isNaN(d.getTime())) return d.toISOString().slice(0, 10)
 
-  return String(value).slice(0, 10)
+  return text.slice(0, 10)
 }
 
 function daysInclusive(start: any, end: any) {
@@ -718,11 +567,29 @@ function mapRow(table: TableName, raw: Row) {
   return cleanRow(mapped)
 }
 
-function hasUsefulData(item: ImportItem, row: Row) {
-  return item.qualityKeys.some((key) => {
-    const value = row[key]
-    return value !== undefined && value !== null && String(value).trim() !== ''
+function scoreHeaderRow(row: any[]) {
+  const headingWords = [
+    'fleet', 'machine', 'unit', 'equipment',
+    'firstname', 'first name', 'surname', 'employee', 'code',
+    'occupation', 'current job title', 'department', 'shift',
+    'dates', 'total', 'leave type',
+    'part no', 'description', 'qty', 'serial', 'status',
+    'requested by', 'supervisor', 'foreman'
+  ]
+
+  const cells = row.map((item) => String(item || '').trim()).filter(Boolean)
+
+  let score = 0
+
+  cells.forEach((item) => {
+    const normal = normalizeKey(item)
+
+    headingWords.forEach((word) => {
+      if (normal.includes(normalizeKey(word))) score += 1
+    })
   })
+
+  return score + Math.min(cells.length, 10) * 0.1
 }
 
 async function readWorkbook(file: File) {
@@ -732,17 +599,128 @@ async function readWorkbook(file: File) {
 
   workbook.SheetNames.forEach((sheetName) => {
     const sheet = workbook.Sheets[sheetName]
-    const rows = XLSX.utils.sheet_to_json(sheet, { defval: '' }) as Row[]
 
-    rows.forEach((row) => {
-      allRows.push({
-        ...row,
-        _sheet_name: sheetName
+    const raw = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      defval: '',
+      raw: false
+    }) as any[][]
+
+    if (!raw.length) return
+
+    let headerIndex = 0
+    let bestScore = -1
+
+    raw.forEach((row, index) => {
+      const score = scoreHeaderRow(row)
+
+      if (score > bestScore) {
+        bestScore = score
+        headerIndex = index
+      }
+    })
+
+    const headers = (raw[headerIndex] || []).map((header, index) => {
+      const clean = String(header || '').trim()
+      return clean || `Column ${index + 1}`
+    })
+
+    raw.slice(headerIndex + 1).forEach((row) => {
+      const obj: Row = {}
+      let filled = 0
+
+      headers.forEach((header, index) => {
+        const value = row[index]
+
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+          obj[header] = value
+          filled += 1
+        }
       })
+
+      if (filled > 0) {
+        allRows.push({
+          ...obj,
+          _sheet_name: sheetName
+        })
+      }
     })
   })
 
   return allRows
+}
+
+function parseDateRange(value: any) {
+  const text = String(value || '').trim()
+  const matches = text.match(/\d{1,4}[./-]\d{1,2}[./-]\d{1,4}/g) || []
+
+  if (matches.length >= 2) {
+    return [dateOnly(matches[0]), dateOnly(matches[1])]
+  }
+
+  return ['', '']
+}
+
+function fullNameFromRaw(raw: Row) {
+  const firstName = getCell(raw, ['FirstName', 'First Name', 'first_name', 'Forename'])
+  const surname = getCell(raw, ['Surname', 'Last Name', 'last_name'])
+
+  return `${String(firstName || '').trim()} ${String(surname || '').trim()}`.trim()
+}
+
+function polishMappedRow(table: TableName, raw: Row, mapped: Row) {
+  const next = { ...mapped }
+
+  if (table === 'personnel') {
+    const fullName = fullNameFromRaw(raw)
+
+    if (!next.name && fullName) next.name = fullName
+    if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
+    if (!next.role || next.role === 'Diesel Plant Fitter') {
+      next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade']) || next.role
+    }
+    if (!next.section || next.section === 'Workshop') {
+      next.section = getCell(raw, ['Department', 'Dept', 'Section']) || next.section
+    }
+    if (!next.employment_status) next.employment_status = 'Active'
+    if (!next.shift) next.shift = 'Shift 1'
+    if (!next.staff_group) next.staff_group = 'Workshop Staff'
+
+    next.id = next.employee_no || next.name || next.id || uid()
+  }
+
+  if (table === 'leave_records') {
+    const fullName = fullNameFromRaw(raw)
+    const range = getCell(raw, ['DATES', 'Dates', 'Date Range', 'Leave Dates'])
+    const [startDate, endDate] = parseDateRange(range)
+
+    if (!next.person_name && fullName) next.person_name = fullName
+    if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
+    if (!next.role) next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade'])
+    if (!next.section) next.section = getCell(raw, ['Department', 'Dept', 'Section'])
+    if (!next.leave_type || next.leave_type === 'Annual Leave') {
+      next.leave_type = getCell(raw, ['LEAVE TYPE', 'Leave Type', 'Type']) || 'Annual Leave'
+    }
+    if (!next.start_date && startDate) next.start_date = startDate
+    if (!next.end_date && endDate) next.end_date = endDate
+
+    const totalDays = Number(getCell(raw, ['TOTAL', 'Total', 'Days', 'Leave Days']))
+    if (!next.days || Number(next.days) === 0) {
+      next.days = Number.isFinite(totalDays) && totalDays > 0 ? totalDays : daysInclusive(next.start_date, next.end_date)
+    }
+
+    if (!next.status) next.status = 'Approved'
+    next.id = next.id || uid()
+  }
+
+  return cleanRow(next)
+}
+
+function hasUsefulData(item: ImportItem, row: Row) {
+  return item.qualityKeys.some((key) => {
+    const value = row[key]
+    return value !== undefined && value !== null && String(value).trim() !== ''
+  })
 }
 
 function Badge({ value }: { value: string }) {
@@ -814,7 +792,7 @@ export default function ImporterPage() {
       setRawHeadings(headings)
 
       const mapped = rawRows
-        .map((row) => mapRow(selected, row))
+        .map((row) => polishMappedRow(selected, row, mapRow(selected, row)))
         .filter((row) => hasUsefulData(selectedImport, row))
 
       setPreviewRows(mapped.slice(0, 10))
@@ -1173,7 +1151,7 @@ export default function ImporterPage() {
           <div className="mark">TE</div>
           <div>
             <h1>Turbo Energy Smart Excel Importer</h1>
-            <p>Universal Excel/CSV upload center for every workshop page. Works with different heading names and multiple sheets.</p>
+            <p>Universal Excel/CSV upload center for every workshop page. Works with different heading names, merged-top sheets and multiple sheets.</p>
           </div>
         </div>
 
@@ -1233,8 +1211,8 @@ export default function ImporterPage() {
                 />
 
                 <p>
-                  Accepts headings like Fleet Number, Fleet No, Machine, Unit, Qty, Quantity,
-                  Requested By, Foreman, Employee Name, Clock No, Trade, Department, Section, Status, ETA and more.
+                  Accepts headings like Fleet Number, Machine, Unit, Qty, Quantity, Requested By,
+                  Foreman, FirstName, Surname, Code, Occupation, Department, Dates, Total and Leave Type.
                 </p>
               </div>
 
@@ -1266,18 +1244,18 @@ export default function ImporterPage() {
 
           <div className="help-grid">
             <div className="card">
-              <b>Multiple styles</b>
-              <p>It does not need exact headings. It searches common workshop terms and matches them to the correct fields.</p>
+              <b>Finds headings automatically</b>
+              <p>It checks the whole sheet and finds the best heading row, even when headings are on row 4.</p>
             </div>
 
             <div className="card">
-              <b>Multiple sheets</b>
-              <p>If your workbook has more than one sheet, it reads all sheets and imports usable rows.</p>
+              <b>Personnel names</b>
+              <p>It joins FirstName + Surname and reads Code, Occupation and Department.</p>
             </div>
 
             <div className="card">
-              <b>Safer upload</b>
-              <p>Fleet and Personnel update existing records. Other registers add new records so histories are preserved.</p>
+              <b>Leave dates</b>
+              <p>It reads DATES like 23.04.2026 - 14.05.2026 and splits start/end automatically.</p>
             </div>
           </div>
 
