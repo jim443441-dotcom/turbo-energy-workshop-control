@@ -47,6 +47,16 @@ type ImportConfig = {
   fields: FieldDef[]
 }
 
+type ParsedWorkbook = {
+  rows: Row[]
+  headings: string[]
+  matrix: { sheetName: string; rowIndex: number; cells: any[] }[]
+}
+
+function f(key: string, aliases: string[], type: FieldType = 'text', fallback: any = ''): FieldDef {
+  return { key, aliases, type, fallback }
+}
+
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
 const today = () => new Date().toISOString().slice(0, 10)
 
@@ -57,7 +67,7 @@ const IMPORTS: ImportConfig[] = [
     description: 'Machines, fleet numbers, hours, mileage, department and status.',
     qualityKeys: ['fleet_no'],
     fields: [
-      f('fleet_no', ['fleet', 'fleet no', 'fleet number', 'machine', 'machine no', 'unit', 'unit no', 'equipment', 'equipment no']),
+      f('fleet_no', ['fleet', 'fleet no', 'fleet number', 'machine', 'machine no', 'unit', 'unit no', 'equipment', 'equipment no', 'plant no']),
       f('machine_type', ['machine type', 'type', 'equipment type', 'fleet type']),
       f('make_model', ['make model', 'model', 'make', 'description']),
       f('reg_no', ['reg', 'registration', 'reg no']),
@@ -500,74 +510,46 @@ const IMPORTS: ImportConfig[] = [
   }
 ]
 
-function f(key: string, aliases: string[], type: FieldType = 'text', fallback: any = ''): FieldDef {
-  return { key, aliases, type, fallback }
-}
-
 function normalizeKey(value: any) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '')
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
 function cleanRow(row: Row) {
   const out: Row = {}
-
   Object.entries(row).forEach(([key, value]) => {
     if (value === undefined || value === null) return
     if (typeof value === 'string' && value.trim() === '') return
     out[key] = value
   })
-
   return out
 }
 
 function parseExcelDateNumber(value: number) {
   const parsed = XLSX.SSF.parse_date_code(value)
   if (!parsed) return ''
-
-  const yyyy = String(parsed.y).padStart(4, '0')
-  const mm = String(parsed.m).padStart(2, '0')
-  const dd = String(parsed.d).padStart(2, '0')
-
-  return `${yyyy}-${mm}-${dd}`
+  return `${String(parsed.y).padStart(4, '0')}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`
 }
 
 function dateOnly(value: any) {
   if (!value) return ''
 
-  if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    return value.toISOString().slice(0, 10)
-  }
-
-  if (typeof value === 'number' && value > 20000) {
-    return parseExcelDateNumber(value)
-  }
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10)
+  if (typeof value === 'number' && value > 20000) return parseExcelDateNumber(value)
 
   const text = String(value).trim()
   if (!text) return ''
 
   let match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/)
   if (match) {
-    const dd = match[1].padStart(2, '0')
-    const mm = match[2].padStart(2, '0')
     const yyyy = match[3].length === 2 ? `20${match[3]}` : match[3]
-    return `${yyyy}-${mm}-${dd}`
+    return `${yyyy}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`
   }
 
   match = text.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/)
-  if (match) {
-    const yyyy = match[1]
-    const mm = match[2].padStart(2, '0')
-    const dd = match[3].padStart(2, '0')
-    return `${yyyy}-${mm}-${dd}`
-  }
+  if (match) return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`
 
   const parsed = new Date(text)
-  if (!Number.isNaN(parsed.getTime())) {
-    return parsed.toISOString().slice(0, 10)
-  }
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
 
   return ''
 }
@@ -575,42 +557,29 @@ function dateOnly(value: any) {
 function daysInclusive(start: any, end: any) {
   const s = new Date(start)
   const e = new Date(end)
-
   if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0
-
   return Math.max(0, Math.floor((e.getTime() - s.getTime()) / 86400000) + 1)
 }
 
 function exactCell(row: Row, aliases: string[]) {
   const keys = Object.keys(row)
-
   for (const alias of aliases) {
     const found = keys.find((key) => normalizeKey(key) === normalizeKey(alias))
-    if (found && row[found] !== undefined && row[found] !== null && String(row[found]).trim() !== '') {
-      return row[found]
-    }
+    if (found && String(row[found] ?? '').trim() !== '') return row[found]
   }
-
   return ''
 }
 
 function fuzzyCell(row: Row, aliases: string[]) {
   const keys = Object.keys(row)
-
   for (const alias of aliases) {
     const wanted = normalizeKey(alias)
-
     const found = keys.find((key) => {
       const actual = normalizeKey(key)
-      if (!actual || !wanted) return false
-      return actual.includes(wanted) || wanted.includes(actual)
+      return actual && wanted && (actual.includes(wanted) || wanted.includes(actual))
     })
-
-    if (found && row[found] !== undefined && row[found] !== null && String(row[found]).trim() !== '') {
-      return row[found]
-    }
+    if (found && String(row[found] ?? '').trim() !== '') return row[found]
   }
-
   return ''
 }
 
@@ -646,40 +615,52 @@ function convertValue(raw: Row, field: FieldDef) {
     return Number.isFinite(num) ? num : field.fallback ?? 0
   }
 
-  if (field.type === 'date') {
-    return dateOnly(value)
-  }
+  if (field.type === 'date') return dateOnly(value)
 
   return String(value ?? '').trim()
 }
 
-function makeId(table: TableName, mapped: Row) {
-  if (table === 'fleet_machines') return mapped.fleet_no || uid()
-  if (table === 'personnel') return mapped.employee_no || mapped.name || uid()
-  return uid()
-}
-
 function parseDateRange(value: any) {
   const text = String(value || '').trim()
-
   const matches = text.match(/\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/g) || []
-
-  if (matches.length >= 2) {
-    return [dateOnly(matches[0]), dateOnly(matches[1])]
-  }
-
-  if (matches.length === 1) {
-    return [dateOnly(matches[0]), dateOnly(matches[0])]
-  }
-
+  if (matches.length >= 2) return [dateOnly(matches[0]), dateOnly(matches[1])]
+  if (matches.length === 1) return [dateOnly(matches[0]), dateOnly(matches[0])]
   return ['', '']
 }
 
 function fullNameFromRaw(raw: Row) {
-  const firstName = getCell(raw, ['FirstName', 'First Name', 'Forename', 'Name'])
+  const firstName = getCell(raw, ['FirstName', 'First Name', 'Forename'])
   const surname = getCell(raw, ['Surname', 'Last Name'])
+  const normalName = getCell(raw, ['Name', 'Employee Name', 'Full Name'])
+  return `${String(firstName || '').trim()} ${String(surname || '').trim()}`.trim() || String(normalName || '').trim()
+}
 
-  return `${String(firstName || '').trim()} ${String(surname || '').trim()}`.trim()
+function inferMachineType(fleetNo: string, rowText = '') {
+  const text = `${fleetNo} ${rowText}`.toUpperCase()
+  if (text.includes('FEL')) return 'FEL'
+  if (text.includes('EXC') || text.includes('TEX')) return 'Excavator'
+  if (text.includes('ADT') || text.includes('HT') || text.includes('HOWO') || text.includes('TRUCK')) return 'Truck'
+  if (text.includes('DOZER') || text.includes('DZ')) return 'Dozer'
+  if (text.includes('GRADER') || text.includes('GD')) return 'Grader'
+  if (text.includes('ROLLER')) return 'Roller'
+  if (text.includes('TLB')) return 'TLB'
+  if (text.includes('LDV') || text.includes('AFX') || text.includes('AG')) return 'LDV'
+  return 'Machine'
+}
+
+function fleetCandidateFromCells(cells: any[]) {
+  const skipWords = ['DATE', 'TOTAL', 'QTY', 'QUANTITY', 'DESCRIPTION', 'MACHINE', 'FLEET', 'TYPE', 'STATUS', 'DEPARTMENT']
+  const parts = cells.flatMap((cell) => String(cell || '').split(/[\s,;:/|]+/)).map((x) => x.trim()).filter(Boolean)
+
+  for (const part of parts) {
+    const clean = part.toUpperCase().replace(/[^A-Z0-9-]/g, '')
+    if (!clean) continue
+    if (skipWords.includes(clean)) continue
+    if (/^\d{1,2}[.-]\d{1,2}[.-]\d{2,4}$/.test(clean)) continue
+    if (/^[A-Z]{1,5}-?\d{1,5}[A-Z]?$/.test(clean)) return clean.replace(/-/g, '')
+  }
+
+  return ''
 }
 
 function polishMappedRow(table: TableName, raw: Row, mapped: Row) {
@@ -687,20 +668,15 @@ function polishMappedRow(table: TableName, raw: Row, mapped: Row) {
 
   if (table === 'personnel') {
     const fullName = fullNameFromRaw(raw)
-
     if (!next.name && fullName) next.name = fullName
     if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
-    if (!next.role || next.role === 'Workshop Employee') {
-      next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade']) || next.role
-    }
-    if (!next.section || next.section === 'Workshop') {
-      next.section = getCell(raw, ['Department', 'Dept', 'Section']) || next.section
-    }
+    if (!next.role || next.role === 'Workshop Employee') next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade']) || next.role
+    if (!next.section || next.section === 'Workshop') next.section = getCell(raw, ['Department', 'Dept', 'Section']) || next.section
 
     next.shift = next.shift || 'Shift 1'
     next.staff_group = next.staff_group || 'Workshop Staff'
     next.employment_status = next.employment_status || 'Active'
-    next.id = next.employee_no || next.name || next.id || uid()
+    next.id = String(next.employee_no || next.name || uid()).trim()
   }
 
   if (table === 'leave_records') {
@@ -712,21 +688,26 @@ function polishMappedRow(table: TableName, raw: Row, mapped: Row) {
     if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
     if (!next.role) next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade'])
     if (!next.section) next.section = getCell(raw, ['Department', 'Dept', 'Section'])
-    if (!next.leave_type || next.leave_type === 'Annual Leave') {
-      next.leave_type = getCell(raw, ['LEAVE TYPE', 'Leave Type', 'Type']) || 'Annual Leave'
-    }
-
+    if (!next.leave_type || next.leave_type === 'Annual Leave') next.leave_type = getCell(raw, ['LEAVE TYPE', 'Leave Type', 'Type']) || 'Annual Leave'
     if (!next.start_date && startDate) next.start_date = startDate
     if (!next.end_date && endDate) next.end_date = endDate
 
     const totalDays = Number(getCell(raw, ['TOTAL', 'Total', 'Days', 'Leave Days']))
-    if (!next.days || Number(next.days) === 0) {
-      next.days = Number.isFinite(totalDays) && totalDays > 0 ? totalDays : daysInclusive(next.start_date, next.end_date)
-    }
+    if (!next.days || Number(next.days) === 0) next.days = Number.isFinite(totalDays) && totalDays > 0 ? totalDays : daysInclusive(next.start_date, next.end_date)
 
     next.shift = next.shift || 'Shift 1'
     next.status = next.status || 'Approved'
-    next.id = next.id || uid()
+    next.id = uid()
+  }
+
+  if (table === 'fleet_machines') {
+    const cells = Array.isArray(raw.__cells) ? raw.__cells : Object.values(raw)
+    const candidate = fleetCandidateFromCells(cells)
+    if (!next.fleet_no && candidate) next.fleet_no = candidate
+    if (!next.machine_type && next.fleet_no) next.machine_type = inferMachineType(next.fleet_no, cells.join(' '))
+    next.department = next.department || 'Workshop'
+    next.status = next.status || 'Available'
+    next.id = String(next.fleet_no || uid()).trim()
   }
 
   return cleanRow(next)
@@ -735,29 +716,15 @@ function polishMappedRow(table: TableName, raw: Row, mapped: Row) {
 function applyDefaults(table: TableName, row: Row) {
   const next = { ...row }
 
-  const defaultTodayTables = [
-    'spares_orders',
-    'tyre_measurements',
-    'tyre_orders',
-    'battery_orders',
-    'hose_requests',
-    'tool_orders',
-    'employee_tools',
-    'fabrication_requests',
-    'fabrication_projects',
-    'operations'
-  ]
+  const todayKey =
+    table === 'tyre_measurements' ? 'measurement_date' :
+    table === 'employee_tools' ? 'issue_date' :
+    table === 'fabrication_projects' ? 'start_date' :
+    table === 'operations' ? 'event_date' :
+    ['spares_orders', 'tyre_orders', 'battery_orders', 'hose_requests', 'tool_orders', 'fabrication_requests'].includes(table) ? 'request_date' :
+    ''
 
-  if (defaultTodayTables.includes(table)) {
-    const key =
-      table === 'tyre_measurements' ? 'measurement_date' :
-      table === 'employee_tools' ? 'issue_date' :
-      table === 'fabrication_projects' ? 'start_date' :
-      table === 'operations' ? 'event_date' :
-      'request_date'
-
-    if (!next[key]) next[key] = today()
-  }
+  if (todayKey && !next[todayKey]) next[todayKey] = today()
 
   if (table === 'spares_orders') {
     next.workflow_stage = next.workflow_stage || 'Requested'
@@ -769,26 +736,20 @@ function applyDefaults(table: TableName, row: Row) {
 
 function mapRow(config: ImportConfig, raw: Row) {
   const mapped: Row = {}
-
   config.fields.forEach((field) => {
     mapped[field.key] = convertValue(raw, field)
   })
 
-  mapped.id = makeId(config.table, mapped)
-
-  return applyDefaults(config.table, polishMappedRow(config.table, raw, cleanRow(mapped)))
+  return applyDefaults(config.table, polishMappedRow(config.table, raw, mapped))
 }
 
 function hasUsefulData(config: ImportConfig, row: Row) {
-  return config.qualityKeys.some((key) => {
-    const value = row[key]
-    return value !== undefined && value !== null && String(value).trim() !== ''
-  })
+  return config.qualityKeys.some((key) => String(row[key] ?? '').trim() !== '')
 }
 
 function scoreHeaderRow(row: any[]) {
   const words = [
-    'fleet', 'machine', 'unit', 'equipment',
+    'fleet', 'machine', 'unit', 'equipment', 'asset',
     'firstname', 'first name', 'surname', 'employee', 'code',
     'occupation', 'current job title', 'department', 'shift',
     'dates', 'total', 'leave type',
@@ -809,27 +770,25 @@ function scoreHeaderRow(row: any[]) {
   return score + Math.min(cells.length, 10) * 0.1
 }
 
-async function readWorkbook(file: File) {
+async function readWorkbook(file: File): Promise<ParsedWorkbook> {
   const buffer = await file.arrayBuffer()
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
-  const allRows: Row[] = []
+  const rows: Row[] = []
+  const headings = new Set<string>()
+  const matrix: ParsedWorkbook['matrix'] = []
 
   workbook.SheetNames.forEach((sheetName) => {
     const sheet = workbook.Sheets[sheetName]
-    const raw = XLSX.utils.sheet_to_json(sheet, {
-      header: 1,
-      defval: '',
-      raw: false
-    }) as any[][]
-
+    const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true }) as any[][]
     if (!raw.length) return
+
+    raw.forEach((line, rowIndex) => matrix.push({ sheetName, rowIndex, cells: line }))
 
     let headerIndex = 0
     let bestScore = -1
 
-    raw.forEach((row, index) => {
-      const score = scoreHeaderRow(row)
-
+    raw.forEach((line, index) => {
+      const score = scoreHeaderRow(line)
       if (score > bestScore) {
         bestScore = score
         headerIndex = index
@@ -841,44 +800,77 @@ async function readWorkbook(file: File) {
       return clean || `Column ${index + 1}`
     })
 
-    raw.slice(headerIndex + 1).forEach((row) => {
-      const obj: Row = {}
+    headers.forEach((h) => headings.add(h))
+
+    raw.slice(headerIndex + 1).forEach((line, idx) => {
+      const obj: Row = { __sheet_name: sheetName, __row_index: headerIndex + 1 + idx, __cells: line }
       let filled = 0
 
       headers.forEach((header, index) => {
-        const value = row[index]
-
+        const value = line[index]
         if (value !== undefined && value !== null && String(value).trim() !== '') {
           obj[header] = value
           filled += 1
         }
       })
 
-      if (filled > 0) {
-        allRows.push({ ...obj, _sheet_name: sheetName })
-      }
+      if (filled > 0) rows.push(obj)
     })
   })
 
-  return allRows
+  return { rows, headings: Array.from(headings), matrix }
+}
+
+function extractFleetFallback(parsed: ParsedWorkbook) {
+  const map = new Map<string, Row>()
+
+  parsed.matrix.forEach((line) => {
+    const fleetNo = fleetCandidateFromCells(line.cells)
+    if (!fleetNo) return
+
+    const rowText = line.cells.map((x) => String(x || '')).join(' ')
+    map.set(fleetNo, {
+      id: fleetNo,
+      fleet_no: fleetNo,
+      machine_type: inferMachineType(fleetNo, rowText),
+      make_model: '',
+      department: 'Workshop',
+      location: line.sheetName,
+      hours: 0,
+      mileage: 0,
+      status: 'Available',
+      notes: rowText.slice(0, 180)
+    })
+  })
+
+  return Array.from(map.values())
+}
+
+function dedupeRows(config: ImportConfig, rows: Row[]) {
+  const map = new Map<string, Row>()
+
+  rows.forEach((row) => {
+    let key = ''
+
+    if (config.table === 'personnel') key = String(row.employee_no || row.name || '').trim()
+    if (config.table === 'fleet_machines') key = String(row.fleet_no || '').trim()
+    if (!key) key = String(row.id || uid()).trim()
+
+    map.set(key, { ...row, id: key })
+  })
+
+  return Array.from(map.values())
 }
 
 function Badge({ value }: { value: string }) {
   const v = String(value || 'Ready')
   const low = v.toLowerCase()
-
-  const cls =
-    low.includes('failed') || low.includes('error')
-      ? 'danger'
-      : low.includes('uploaded') || low.includes('connected')
-        ? 'good'
-        : 'neutral'
-
+  const cls = low.includes('failed') || low.includes('error') ? 'danger' : low.includes('uploaded') || low.includes('connected') ? 'good' : 'neutral'
   return <span className={`badge ${cls}`}>{v}</span>
 }
 
 export default function ImporterPage() {
-  const [selected, setSelected] = useState<TableName>('personnel')
+  const [selected, setSelected] = useState<TableName>('fleet_machines')
   const [status, setStatus] = useState('Ready')
   const [busy, setBusy] = useState(false)
   const [previewRows, setPreviewRows] = useState<Row[]>([])
@@ -893,24 +885,33 @@ export default function ImporterPage() {
     return IMPORTS.filter((item) => `${item.label} ${item.description} ${item.table}`.toLowerCase().includes(q))
   }, [search])
 
-  async function insertRows(config: ImportConfig, rows: Row[]) {
-    if (!supabase || !isSupabaseConfigured) {
-      throw new Error('Supabase is not configured.')
+  function buildRows(config: ImportConfig, parsed: ParsedWorkbook) {
+    let mapped = parsed.rows.map((row) => mapRow(config, row)).filter((row) => hasUsefulData(config, row))
+
+    if (!mapped.length && config.table === 'fleet_machines') {
+      mapped = extractFleetFallback(parsed)
     }
 
+    return dedupeRows(config, mapped)
+  }
+
+  async function insertRows(config: ImportConfig, rows: Row[]) {
+    if (!supabase || !isSupabaseConfigured) throw new Error('Supabase is not configured.')
+
     let uploaded = 0
-    const chunkSize = 100
+    const chunkSize = 50
 
     for (let i = 0; i < rows.length; i += chunkSize) {
       const chunk = rows.slice(i, i + chunkSize)
 
       const { error } = await supabase.from(config.table as any).upsert(chunk, { onConflict: 'id' })
-
       if (error) throw error
 
       uploaded += chunk.length
       setStatus(`Uploaded ${uploaded}/${rows.length} records to ${config.label}...`)
     }
+
+    setStatus(`Uploaded ${rows.length} records to ${config.label}.`)
   }
 
   async function handleUpload(file?: File) {
@@ -924,23 +925,32 @@ export default function ImporterPage() {
     try {
       setStatus(`Reading ${file.name}...`)
 
-      const rawRows = await readWorkbook(file)
-      const headings = Array.from(new Set(rawRows.flatMap((row) => Object.keys(row).filter((key) => key !== '_sheet_name'))))
-      setRawHeadings(headings)
+      const parsed = await readWorkbook(file)
+      setRawHeadings(parsed.headings)
 
-      const mapped = rawRows
-        .map((row) => mapRow(selectedConfig, row))
-        .filter((row) => hasUsefulData(selectedConfig, row))
+      let activeConfig = selectedConfig
+      let rows = buildRows(activeConfig, parsed)
 
-      setPreviewRows(mapped.slice(0, 10))
+      if (!rows.length) {
+        for (const config of IMPORTS) {
+          const attempt = buildRows(config, parsed)
+          if (attempt.length) {
+            activeConfig = config
+            rows = attempt
+            setSelected(config.table)
+            break
+          }
+        }
+      }
 
-      if (!mapped.length) {
-        setStatus(`No usable rows found for ${selectedConfig.label}. Choose the correct register on the left.`)
+      setPreviewRows(rows.slice(0, 12))
+
+      if (!rows.length) {
+        setStatus('No usable rows found. The file was read, but no fleet numbers, employee names, leave records, parts, tyres, batteries, hoses or tools were detected.')
         return
       }
 
-      await insertRows(selectedConfig, mapped)
-      setStatus(`Uploaded ${mapped.length} records to ${selectedConfig.label}.`)
+      await insertRows(activeConfig, rows)
     } catch (err: any) {
       setStatus(`Upload failed: ${err?.message || 'Unknown error'}`)
     } finally {
@@ -1006,20 +1016,9 @@ export default function ImporterPage() {
           font-size: 22px;
         }
 
-        h1, h2, h3 {
-          margin: 0;
-        }
-
-        p {
-          color: var(--muted);
-          line-height: 1.4;
-        }
-
-        a {
-          color: var(--blue);
-          font-weight: 900;
-          text-decoration: none;
-        }
+        h1, h2, h3 { margin: 0; }
+        p { color: var(--muted); line-height: 1.4; }
+        a { color: var(--blue); font-weight: 900; text-decoration: none; }
 
         .grid {
           display: grid;
@@ -1075,14 +1074,8 @@ export default function ImporterPage() {
           background: rgba(255,122,26,.16);
         }
 
-        .module-btn b {
-          display: block;
-          margin-bottom: 4px;
-        }
-
-        .module-btn small {
-          color: var(--muted);
-        }
+        .module-btn b { display: block; margin-bottom: 4px; }
+        .module-btn small { color: var(--muted); }
 
         .top-card {
           display: grid;
@@ -1246,29 +1239,13 @@ export default function ImporterPage() {
           margin-top: 18px;
         }
 
-        .help-grid .card {
-          padding: 14px;
-        }
-
-        .help-grid b {
-          color: var(--blue);
-        }
+        .help-grid .card { padding: 14px; }
+        .help-grid b { color: var(--blue); }
 
         @media (max-width: 980px) {
-          .grid,
-          .top-card,
-          .help-grid {
-            grid-template-columns: 1fr;
-          }
-
-          .import-shell {
-            padding: 12px;
-          }
-
-          .hero {
-            align-items: flex-start;
-            flex-direction: column;
-          }
+          .grid, .top-card, .help-grid { grid-template-columns: 1fr; }
+          .import-shell { padding: 12px; }
+          .hero { align-items: flex-start; flex-direction: column; }
         }
       `}</style>
 
@@ -1337,8 +1314,7 @@ export default function ImporterPage() {
                 />
 
                 <p>
-                  Accepts different headings. For your leave file it reads Code, FirstName, Surname,
-                  Occupation, Department, DATES, TOTAL and LEAVE TYPE.
+                  This importer now scans the whole sheet. For machine lists it can detect fleet numbers even when there are no proper headings.
                 </p>
               </div>
 
@@ -1346,79 +1322,55 @@ export default function ImporterPage() {
             </div>
 
             <div className="meta">
-              <div>
-                <span>Selected</span>
-                <b>{selectedConfig.label}</b>
-              </div>
-
-              <div>
-                <span>Database table</span>
-                <b>{selectedConfig.table}</b>
-              </div>
-
-              <div>
-                <span>Save mode</span>
-                <b>Upsert / update</b>
-              </div>
-
-              <div>
-                <span>File</span>
-                <b>{fileName || 'None'}</b>
-              </div>
+              <div><span>Selected</span><b>{selectedConfig.label}</b></div>
+              <div><span>Database table</span><b>{selectedConfig.table}</b></div>
+              <div><span>Save mode</span><b>Upsert / update</b></div>
+              <div><span>File</span><b>{fileName || 'None'}</b></div>
             </div>
           </div>
 
           <div className="help-grid">
             <div className="card">
-              <b>1. Choose register</b>
-              <p>Choose Personnel Register for attendance/personnel files. Choose Leave / Off Schedule for leave files.</p>
+              <b>Fleet files</b>
+              <p>Choose Fleet Register. It will scan every row for fleet numbers.</p>
             </div>
 
             <div className="card">
-              <b>2. Upload Excel</b>
-              <p>The importer finds the correct heading row even if headings are not on row 1.</p>
+              <b>Personnel files</b>
+              <p>Choose Personnel Register. It reads Code, FirstName, Surname, Occupation and Department.</p>
             </div>
 
             <div className="card">
-              <b>3. Check app</b>
-              <p>When it says Uploaded, go back to the normal app page and press CTRL + F5.</p>
+              <b>Leave files</b>
+              <p>Choose Leave / Off Schedule. It converts 23.04.2026 into 2026-04-23 before saving.</p>
             </div>
           </div>
 
           <div className="card" style={{ marginTop: 18 }}>
             <h3>Headings found in last file</h3>
-
             {rawHeadings.length ? (
               <div className="headings">
-                {rawHeadings.map((h) => (
-                  <span className="chip" key={h}>{h}</span>
-                ))}
+                {rawHeadings.map((h) => <span className="chip" key={h}>{h}</span>)}
               </div>
             ) : (
-              <div className="empty">No file loaded yet.</div>
+              <div className="empty">No headings found. The importer will still scan the whole file for usable data.</div>
             )}
           </div>
 
           <div className="card" style={{ marginTop: 18 }}>
             <h3>Preview of mapped rows</h3>
-
             {previewRows.length ? (
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      {Object.keys(previewRows[0]).slice(0, 12).map((key) => (
-                        <th key={key}>{key}</th>
-                      ))}
+                      {Object.keys(previewRows[0]).slice(0, 12).map((key) => <th key={key}>{key}</th>)}
                     </tr>
                   </thead>
-
                   <tbody>
                     {previewRows.map((row) => (
                       <tr key={row.id || JSON.stringify(row)}>
-                        {Object.keys(previewRows[0]).slice(0, 12).map((key) => (
-                          <td key={key}>{String(row[key] ?? '')}</td>
-                        ))}
+                        {Object.keys(previewRows[0]).slice(0, 12).map((key) => <td key={key}>{String(row[key] ?? '')}</td>)}
                       </tr>
                     ))}
                   </tbody>
