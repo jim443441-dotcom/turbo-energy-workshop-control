@@ -1662,3 +1662,590 @@ export default function Home() {
       </div>
     )
   }
+  function renderTyres() {
+    return (
+      <div className="page-grid tyres-page">
+        <SectionTitle title="Tyres" subtitle="Track tyre make, serial, company number, fitment, fleet, hours/mileage, measurements, repairs, stock and tyre orders." />
+
+        <div className="stats-grid">
+          <StatCard title="Tyres fitted/stock" value={data.tyres.length} tone="blue" />
+          <StatCard title="Measurements due" value={metrics.tyreDue.length} tone="red" />
+          <StatCard title="Tyre orders" value={data.tyre_orders.length} tone="orange" />
+          <StatCard title="Repairs logged" value={data.tyre_measurements.length} tone="green" />
+        </div>
+
+        <div className="grid-2">
+          <div className="card form-card accent-card">
+            <h3>Add tyre record</h3>
+            <div className="form-grid">
+              <Field label="Make"><input value={tyreForm.make} onChange={(e) => setTyreForm({ ...tyreForm, make: e.target.value })} /></Field>
+              <Field label="Serial number"><input value={tyreForm.serial_no} onChange={(e) => setTyreForm({ ...tyreForm, serial_no: e.target.value })} /></Field>
+              <Field label="Company number"><input value={tyreForm.company_no} onChange={(e) => setTyreForm({ ...tyreForm, company_no: e.target.value })} /></Field>
+              <Field label="Production date"><input type="date" value={tyreForm.production_date} onChange={(e) => setTyreForm({ ...tyreForm, production_date: e.target.value })} /></Field>
+              <Field label="Date fitted"><input type="date" value={tyreForm.fitted_date} onChange={(e) => setTyreForm({ ...tyreForm, fitted_date: e.target.value })} /></Field>
+              <Field label="Fleet number"><input list="fleet-list" value={tyreForm.fleet_no} onChange={(e) => setTyreForm({ ...tyreForm, fleet_no: e.target.value })} /></Field>
+              <Field label="Fitted by"><input value={tyreForm.fitted_by} onChange={(e) => setTyreForm({ ...tyreForm, fitted_by: e.target.value })} /></Field>
+              <Field label="Position"><select value={tyreForm.position} onChange={(e) => setTyreForm({ ...tyreForm, position: e.target.value })}>{tyrePositions.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Tyre type"><input value={tyreForm.tyre_type} onChange={(e) => setTyreForm({ ...tyreForm, tyre_type: e.target.value })} /></Field>
+              <Field label="Size"><input value={tyreForm.size} onChange={(e) => setTyreForm({ ...tyreForm, size: e.target.value })} /></Field>
+              <Field label="Fitment hours"><input type="number" value={tyreForm.fitment_hours} onChange={(e) => setTyreForm({ ...tyreForm, fitment_hours: e.target.value })} /></Field>
+              <Field label="Fitment mileage"><input type="number" value={tyreForm.fitment_mileage} onChange={(e) => setTyreForm({ ...tyreForm, fitment_mileage: e.target.value })} /></Field>
+              <Field label="Current tread mm"><input type="number" value={tyreForm.current_tread_mm} onChange={(e) => setTyreForm({ ...tyreForm, current_tread_mm: e.target.value })} /></Field>
+              <Field label="Measurement reminder"><input type="date" value={tyreForm.measurement_due_date} onChange={(e) => setTyreForm({ ...tyreForm, measurement_due_date: e.target.value })} /></Field>
+              <Field label="Stock status"><select value={tyreForm.stock_status} onChange={(e) => setTyreForm({ ...tyreForm, stock_status: e.target.value })}><option>Fitted</option><option>In Stock</option><option>Scrapped</option><option>Repair</option></select></Field>
+              <Field label="Photo"><input type="file" accept="image/*" onChange={(e) => attachPhoto(e.target.files?.[0], (v) => setTyreForm({ ...tyreForm, fitment_photo: v }))} /></Field>
+            </div>
+            <Field label="Notes"><textarea rows={3} value={tyreForm.notes} onChange={(e) => setTyreForm({ ...tyreForm, notes: e.target.value })} /></Field>
+            {tyreForm.fitment_photo && <img className="thumb" src={tyreForm.fitment_photo} alt="Tyre fitment" />}
+            <button className="primary" onClick={() => saveRow('tyres', tyreForm)}>Save tyre</button>
+          </div>
+
+          <div className="card form-card">
+            <h3>Tyre measurement / repair</h3>
+            <div className="form-grid">
+              <Field label="Tyre serial"><input value={tyreMeasurementForm.tyre_serial_no} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, tyre_serial_no: e.target.value })} /></Field>
+              <Field label="Fleet number"><input value={tyreMeasurementForm.fleet_no} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, fleet_no: e.target.value })} /></Field>
+              <Field label="Position"><input value={tyreMeasurementForm.position} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, position: e.target.value })} /></Field>
+              <Field label="Date"><input type="date" value={tyreMeasurementForm.measurement_date} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, measurement_date: e.target.value })} /></Field>
+              <Field label="Measured/repaired by"><input value={tyreMeasurementForm.measured_by} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, measured_by: e.target.value })} /></Field>
+              <Field label="Tread depth mm"><input type="number" value={tyreMeasurementForm.tread_depth_mm} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, tread_depth_mm: e.target.value })} /></Field>
+              <Field label="Pressure PSI"><input type="number" value={tyreMeasurementForm.pressure_psi} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, pressure_psi: e.target.value })} /></Field>
+              <Field label="Condition"><select value={tyreMeasurementForm.condition} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, condition: e.target.value })}><option>Good</option><option>Worn</option><option>Cut</option><option>Puncture</option><option>Repaired</option><option>Scrap</option></select></Field>
+            </div>
+            <Field label="Reason / repair notes"><textarea rows={3} value={tyreMeasurementForm.notes} onChange={(e) => setTyreMeasurementForm({ ...tyreMeasurementForm, notes: e.target.value })} /></Field>
+            <button className="primary" onClick={() => saveRow('tyre_measurements', tyreMeasurementForm)}>Save measurement/repair</button>
+
+            <h3>Tyre order request</h3>
+            <div className="form-grid">
+              <Field label="Fleet"><input value={tyreOrderForm.fleet_no} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, fleet_no: e.target.value })} /></Field>
+              <Field label="Tyre type"><input value={tyreOrderForm.tyre_type} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, tyre_type: e.target.value })} /></Field>
+              <Field label="Size"><input value={tyreOrderForm.size} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, size: e.target.value })} /></Field>
+              <Field label="Qty"><input type="number" value={tyreOrderForm.qty} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, qty: e.target.value })} /></Field>
+              <Field label="Requested by"><input value={tyreOrderForm.requested_by} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, requested_by: e.target.value })} /></Field>
+              <Field label="Status"><select value={tyreOrderForm.status} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, status: e.target.value })}><option>Requested</option><option>Need Quote</option><option>Approved</option><option>Ordered</option><option>Delivered</option></select></Field>
+            </div>
+            <Field label="Reason"><textarea rows={2} value={tyreOrderForm.reason} onChange={(e) => setTyreOrderForm({ ...tyreOrderForm, reason: e.target.value })} /></Field>
+            <button onClick={() => saveRow('tyre_orders', tyreOrderForm)}>Notify admin / save tyre order</button>
+          </div>
+        </div>
+
+        <div className="grid-2">
+          <div className="card"><h3>Tyre register</h3><MiniTable rows={data.tyres} columns={[
+            { key: 'serial_no', label: 'Serial' }, { key: 'company_no', label: 'Company no' }, { key: 'make', label: 'Make' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'position', label: 'Position' }, { key: 'measurement_due_date', label: 'Reminder' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status || r.stock_status} /> }
+          ]} /></div>
+          <div className="card"><h3>Tyre orders</h3><MiniTable rows={data.tyre_orders} columns={[
+            { key: 'fleet_no', label: 'Fleet' }, { key: 'tyre_type', label: 'Type' }, { key: 'size', label: 'Size' }, { key: 'qty', label: 'Qty' }, { key: 'requested_by', label: 'By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+          ]} /></div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderBatteries() {
+    return (
+      <div className="page-grid batteries-page">
+        <SectionTitle title="Batteries" subtitle="Track battery make, serial, production date, fitment, charging voltage, stock and battery orders." />
+
+        <div className="stats-grid">
+          <StatCard title="Batteries" value={data.batteries.length} tone="blue" />
+          <StatCard title="Maintenance due" value={metrics.batteryDue.length} tone="red" />
+          <StatCard title="Battery orders" value={data.battery_orders.length} tone="orange" />
+          <StatCard title="In stock" value={data.batteries.filter((b) => String(b.stock_status || '').includes('Stock')).length} tone="green" />
+        </div>
+
+        <div className="grid-2">
+          <div className="card form-card accent-card">
+            <h3>Add battery</h3>
+            <div className="form-grid">
+              <Field label="Make"><input value={batteryForm.make} onChange={(e) => setBatteryForm({ ...batteryForm, make: e.target.value })} /></Field>
+              <Field label="Serial number"><input value={batteryForm.serial_no} onChange={(e) => setBatteryForm({ ...batteryForm, serial_no: e.target.value })} /></Field>
+              <Field label="Production date"><input type="date" value={batteryForm.production_date} onChange={(e) => setBatteryForm({ ...batteryForm, production_date: e.target.value })} /></Field>
+              <Field label="Date fitted"><input type="date" value={batteryForm.fitment_date} onChange={(e) => setBatteryForm({ ...batteryForm, fitment_date: e.target.value })} /></Field>
+              <Field label="Fleet number"><input list="fleet-list" value={batteryForm.fleet_no} onChange={(e) => setBatteryForm({ ...batteryForm, fleet_no: e.target.value })} /></Field>
+              <Field label="Fitted by"><input value={batteryForm.fitted_by} onChange={(e) => setBatteryForm({ ...batteryForm, fitted_by: e.target.value })} /></Field>
+              <Field label="Battery voltage"><select value={batteryForm.volts} onChange={(e) => setBatteryForm({ ...batteryForm, volts: e.target.value })}>{batteryVoltages.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Charging system voltage"><select value={batteryForm.charging_voltage} onChange={(e) => setBatteryForm({ ...batteryForm, charging_voltage: e.target.value })}>{batteryVoltages.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Fitment hours"><input type="number" value={batteryForm.fitment_hours} onChange={(e) => setBatteryForm({ ...batteryForm, fitment_hours: e.target.value })} /></Field>
+              <Field label="Fitment mileage"><input type="number" value={batteryForm.fitment_mileage} onChange={(e) => setBatteryForm({ ...batteryForm, fitment_mileage: e.target.value })} /></Field>
+              <Field label="Maintenance reminder"><input type="date" value={batteryForm.maintenance_due_date} onChange={(e) => setBatteryForm({ ...batteryForm, maintenance_due_date: e.target.value })} /></Field>
+              <Field label="Stock status"><select value={batteryForm.stock_status} onChange={(e) => setBatteryForm({ ...batteryForm, stock_status: e.target.value })}><option>Fitted</option><option>In Stock</option><option>Charging</option><option>Failed</option><option>Scrapped</option></select></Field>
+              <Field label="Fitment photo"><input type="file" accept="image/*" onChange={(e) => attachPhoto(e.target.files?.[0], (v) => setBatteryForm({ ...batteryForm, fitment_photo: v }))} /></Field>
+              <Field label="Status"><select value={batteryForm.status} onChange={(e) => setBatteryForm({ ...batteryForm, status: e.target.value })}><option>Fitted</option><option>In Stock</option><option>Maintenance Due</option><option>Failed</option><option>Replaced</option></select></Field>
+            </div>
+            <Field label="Notes"><textarea rows={3} value={batteryForm.notes} onChange={(e) => setBatteryForm({ ...batteryForm, notes: e.target.value })} /></Field>
+            {batteryForm.fitment_photo && <img className="thumb" src={batteryForm.fitment_photo} alt="Battery fitment" />}
+            <button className="primary" onClick={() => saveRow('batteries', batteryForm)}>Save battery</button>
+          </div>
+
+          <div className="card form-card">
+            <h3>Battery order request</h3>
+            <div className="form-grid">
+              <Field label="Fleet number"><input value={batteryOrderForm.fleet_no} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, fleet_no: e.target.value })} /></Field>
+              <Field label="Battery type"><input value={batteryOrderForm.battery_type} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, battery_type: e.target.value })} /></Field>
+              <Field label="Voltage"><select value={batteryOrderForm.voltage} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, voltage: e.target.value })}>{batteryVoltages.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Qty"><input type="number" value={batteryOrderForm.qty} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, qty: e.target.value })} /></Field>
+              <Field label="Requested by"><input value={batteryOrderForm.requested_by} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, requested_by: e.target.value })} /></Field>
+              <Field label="Priority"><select value={batteryOrderForm.priority} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, priority: e.target.value })}>{priorities.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Status"><select value={batteryOrderForm.status} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, status: e.target.value })}><option>Requested</option><option>Approved</option><option>Ordered</option><option>Delivered</option><option>Cancelled</option></select></Field>
+              <Field label="ETA"><input type="date" value={batteryOrderForm.eta} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, eta: e.target.value })} /></Field>
+            </div>
+            <Field label="Reason"><textarea rows={3} value={batteryOrderForm.reason} onChange={(e) => setBatteryOrderForm({ ...batteryOrderForm, reason: e.target.value })} /></Field>
+            <button className="primary" onClick={() => saveRow('battery_orders', batteryOrderForm)}>Notify admin / save battery order</button>
+          </div>
+        </div>
+
+        <div className="grid-2">
+          <div className="card"><h3>Battery register</h3><MiniTable rows={data.batteries} columns={[
+            { key: 'serial_no', label: 'Serial' }, { key: 'make', label: 'Make' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'volts', label: 'Volts' }, { key: 'charging_voltage', label: 'Charging' }, { key: 'maintenance_due_date', label: 'Reminder' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+          ]} /></div>
+          <div className="card"><h3>Battery orders</h3><MiniTable rows={data.battery_orders} columns={[
+            { key: 'fleet_no', label: 'Fleet' }, { key: 'battery_type', label: 'Type' }, { key: 'voltage', label: 'Voltage' }, { key: 'qty', label: 'Qty' }, { key: 'requested_by', label: 'By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+          ]} /></div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderOperations() {
+    return (
+      <div className="page-grid operations-page">
+        <SectionTitle title="Operations" subtitle="Separate operators by truck/yellow machine type, record history, offences, damages, abuse photos, conditions and score." />
+        <div className="grid-2">
+          <div className="card form-card accent-card">
+            <h3>Operator score sheet</h3>
+            <div className="form-grid">
+              <Field label="Operator name"><input value={operationForm.operator_name} onChange={(e) => setOperationForm({ ...operationForm, operator_name: e.target.value })} /></Field>
+              <Field label="Employee no"><input value={operationForm.employee_no} onChange={(e) => setOperationForm({ ...operationForm, employee_no: e.target.value })} /></Field>
+              <Field label="Machine group"><select value={operationForm.machine_group} onChange={(e) => setOperationForm({ ...operationForm, machine_group: e.target.value })}><option>Truck</option><option>Yellow Machine</option></select></Field>
+              <Field label="Machine type"><select value={operationForm.machine_type} onChange={(e) => setOperationForm({ ...operationForm, machine_type: e.target.value })}>{operationMachineTypes.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Fleet number"><input value={operationForm.fleet_no} onChange={(e) => setOperationForm({ ...operationForm, fleet_no: e.target.value })} /></Field>
+              <Field label="Shift"><select value={operationForm.shift} onChange={(e) => setOperationForm({ ...operationForm, shift: e.target.value })}>{shiftNames.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Score"><input type="number" value={operationForm.score} onChange={(e) => setOperationForm({ ...operationForm, score: e.target.value })} /></Field>
+              <Field label="Supervisor"><input value={operationForm.supervisor} onChange={(e) => setOperationForm({ ...operationForm, supervisor: e.target.value })} /></Field>
+              <Field label="Event date"><input type="date" value={operationForm.event_date} onChange={(e) => setOperationForm({ ...operationForm, event_date: e.target.value })} /></Field>
+              <Field label="Photo"><input type="file" accept="image/*" onChange={(e) => attachPhoto(e.target.files?.[0], (v) => setOperationForm({ ...operationForm, photo_data: v }))} /></Field>
+            </div>
+            <Field label="Offence"><textarea rows={2} value={operationForm.offence} onChange={(e) => setOperationForm({ ...operationForm, offence: e.target.value })} /></Field>
+            <Field label="Damage / abuse report / rough conditions"><textarea rows={3} value={operationForm.damage_report} onChange={(e) => setOperationForm({ ...operationForm, damage_report: e.target.value })} /></Field>
+            {operationForm.photo_data && <img className="thumb" src={operationForm.photo_data} alt="Operation evidence" />}
+            <button className="primary" onClick={() => saveRow('operations', operationForm)}>Save operator record</button>
+          </div>
+
+          <div className="card">
+            <h3>Operator scoring guide</h3>
+            <div className="alert-strip">
+              <span className="page-pill green">90–100 Good</span>
+              <span className="page-pill orange">70–89 Watch</span>
+              <span className="page-pill red">Below 70 High risk</span>
+            </div>
+            <p className="muted">Use supervisor photos and notes to build a fair history of damages, abuse and rough working conditions.</p>
+          </div>
+        </div>
+
+        <div className="card"><h3>Operating history</h3><MiniTable rows={data.operations} columns={[
+          { key: 'operator_name', label: 'Operator' }, { key: 'machine_group', label: 'Group' }, { key: 'machine_type', label: 'Type' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'score', label: 'Score' }, { key: 'offence', label: 'Offence' }, { key: 'supervisor', label: 'Supervisor' }
+        ]} /></div>
+      </div>
+    )
+  }
+
+  function renderHoses() {
+    return (
+      <div className="page-grid hoses-page">
+        <SectionTitle title="Hoses & Fittings" subtitle="Bulk hose/fitting requests, individual hose repairs, offsite repairs, admin approval and stock levels." />
+
+        <div className="stats-grid">
+          <StatCard title="Hose stock items" value={data.hoses.length} tone="blue" />
+          <StatCard title="Open requests" value={metrics.hosePending.length} tone="orange" />
+          <StatCard title="Awaiting approval" value={data.hose_requests.filter((h) => String(h.admin_approval || '') === 'Pending').length} tone="red" />
+          <StatCard title="Offsite repairs" value={data.hose_requests.filter((h) => String(h.offsite_repair || '') === 'Yes').length} tone="purple" />
+        </div>
+
+        <div className="grid-2">
+          <div className="card form-card accent-card">
+            <h3>Hose / fitting request</h3>
+            <div className="form-grid">
+              <Field label="Request date"><input type="date" value={hoseRequestForm.request_date} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, request_date: e.target.value })} /></Field>
+              <Field label="Fleet number"><input value={hoseRequestForm.fleet_no} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, fleet_no: e.target.value })} /></Field>
+              <Field label="Requested by"><input value={hoseRequestForm.requested_by} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, requested_by: e.target.value })} /></Field>
+              <Field label="Hose type"><select value={hoseRequestForm.hose_type} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, hose_type: e.target.value })}>{hoseTypes.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Hose no"><input value={hoseRequestForm.hose_no} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, hose_no: e.target.value })} /></Field>
+              <Field label="Size"><input value={hoseRequestForm.size} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, size: e.target.value })} /></Field>
+              <Field label="Length"><input value={hoseRequestForm.length} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, length: e.target.value })} /></Field>
+              <Field label="Qty"><input type="number" value={hoseRequestForm.qty} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, qty: e.target.value })} /></Field>
+              <Field label="Repair type"><select value={hoseRequestForm.repair_type} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, repair_type: e.target.value })}><option>New hose</option><option>Repair hose</option><option>Fittings only</option><option>Bulk order</option></select></Field>
+              <Field label="Offsite repair"><select value={hoseRequestForm.offsite_repair} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, offsite_repair: e.target.value })}><option>No</option><option>Yes</option></select></Field>
+              <Field label="Admin approval"><select value={hoseRequestForm.admin_approval} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, admin_approval: e.target.value })}><option>Pending</option><option>Approved</option><option>Rejected</option></select></Field>
+              <Field label="Status"><select value={hoseRequestForm.status} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, status: e.target.value })}>{hoseStages.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="ETA"><input type="date" value={hoseRequestForm.eta} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, eta: e.target.value })} /></Field>
+              <Field label="Fittings"><input value={hoseRequestForm.fittings} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, fittings: e.target.value })} /></Field>
+            </div>
+            <Field label="Reason / notes"><textarea rows={3} value={hoseRequestForm.reason} onChange={(e) => setHoseRequestForm({ ...hoseRequestForm, reason: e.target.value })} /></Field>
+            <button className="primary" onClick={() => saveRow('hose_requests', hoseRequestForm)}>Save hose request</button>
+          </div>
+
+          <div className="card form-card">
+            <h3>Hose stock</h3>
+            <div className="form-grid">
+              <Field label="Hose no"><input value={hoseStockForm.hose_no} onChange={(e) => setHoseStockForm({ ...hoseStockForm, hose_no: e.target.value })} /></Field>
+              <Field label="Hose type"><select value={hoseStockForm.hose_type} onChange={(e) => setHoseStockForm({ ...hoseStockForm, hose_type: e.target.value })}>{hoseTypes.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Size"><input value={hoseStockForm.size} onChange={(e) => setHoseStockForm({ ...hoseStockForm, size: e.target.value })} /></Field>
+              <Field label="Length"><input value={hoseStockForm.length} onChange={(e) => setHoseStockForm({ ...hoseStockForm, length: e.target.value })} /></Field>
+              <Field label="Fitting A"><select value={hoseStockForm.fitting_a} onChange={(e) => setHoseStockForm({ ...hoseStockForm, fitting_a: e.target.value })}>{fittingTypes.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Fitting B"><select value={hoseStockForm.fitting_b} onChange={(e) => setHoseStockForm({ ...hoseStockForm, fitting_b: e.target.value })}>{fittingTypes.map((x) => <option key={x}>{x}</option>)}</select></Field>
+              <Field label="Stock qty"><input type="number" value={hoseStockForm.stock_qty} onChange={(e) => setHoseStockForm({ ...hoseStockForm, stock_qty: e.target.value })} /></Field>
+              <Field label="Min qty"><input type="number" value={hoseStockForm.min_qty} onChange={(e) => setHoseStockForm({ ...hoseStockForm, min_qty: e.target.value })} /></Field>
+              <Field label="Shelf"><input value={hoseStockForm.shelf_location} onChange={(e) => setHoseStockForm({ ...hoseStockForm, shelf_location: e.target.value })} /></Field>
+              <Field label="Status"><select value={hoseStockForm.status} onChange={(e) => setHoseStockForm({ ...hoseStockForm, status: e.target.value })}><option>In stock</option><option>Low stock</option><option>Out of stock</option></select></Field>
+            </div>
+            <button className="primary" onClick={() => saveRow('hoses', hoseStockForm)}>Save hose stock</button>
+          </div>
+        </div>
+
+        <div className="grid-2">
+          <div className="card"><h3>Hose requests</h3><MiniTable rows={data.hose_requests} columns={[
+            { key: 'fleet_no', label: 'Fleet' }, { key: 'requested_by', label: 'By' }, { key: 'hose_type', label: 'Type' }, { key: 'size', label: 'Size' }, { key: 'offsite_repair', label: 'Offsite' }, { key: 'admin_approval', label: 'Approval', render: (r) => <Badge value={r.admin_approval} /> }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+          ]} /></div>
+          <div className="card"><h3>Hose/fitting stock</h3><MiniTable rows={data.hoses} columns={[
+            { key: 'hose_no', label: 'Hose no' }, { key: 'hose_type', label: 'Type' }, { key: 'size', label: 'Size' }, { key: 'stock_qty', label: 'Qty' }, { key: 'min_qty', label: 'Min' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+          ]} /></div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderTools() {
+    return (
+      <div className="page-grid tools-page">
+        <SectionTitle title="Tools" subtitle="Tool inventory, quantities, brands, tool orders and employee-issued tool register." />
+
+        <div className="stats-grid">
+          <StatCard title="Tools in register" value={data.tools.length} tone="blue" />
+          <StatCard title="Tool orders" value={metrics.toolOrders.length} tone="orange" />
+          <StatCard title="Issued tools" value={data.employee_tools.filter((t) => String(t.status || '') === 'Issued').length} tone="purple" />
+          <StatCard title="Returned tools" value={data.employee_tools.filter((t) => String(t.status || '') === 'Returned').length} tone="green" />
+        </div>
+
+        <div className="grid-3">
+          <div className="card form-card accent-card">
+            <h3>Tool inventory</h3>
+            <Field label="Tool name"><input value={toolForm.tool_name} onChange={(e) => setToolForm({ ...toolForm, tool_name: e.target.value })} /></Field>
+            <Field label="Category"><select value={toolForm.category} onChange={(e) => setToolForm({ ...toolForm, category: e.target.value })}>{toolCategories.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Brand"><input value={toolForm.brand} onChange={(e) => setToolForm({ ...toolForm, brand: e.target.value })} /></Field>
+            <Field label="Serial no"><input value={toolForm.serial_no} onChange={(e) => setToolForm({ ...toolForm, serial_no: e.target.value })} /></Field>
+            <Field label="Qty"><input type="number" value={toolForm.stock_qty} onChange={(e) => setToolForm({ ...toolForm, stock_qty: e.target.value })} /></Field>
+            <Field label="Section"><select value={toolForm.workshop_section} onChange={(e) => setToolForm({ ...toolForm, workshop_section: e.target.value })}>{workshopSections.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Condition"><select value={toolForm.condition} onChange={(e) => setToolForm({ ...toolForm, condition: e.target.value })}><option>Good</option><option>Fair</option><option>Damaged</option><option>Lost</option></select></Field>
+            <button className="primary" onClick={() => saveRow('tools', toolForm)}>Save tool</button>
+          </div>
+
+          <div className="card form-card">
+            <h3>Tool order</h3>
+            <Field label="Tool name"><input value={toolOrderForm.tool_name} onChange={(e) => setToolOrderForm({ ...toolOrderForm, tool_name: e.target.value })} /></Field>
+            <Field label="Category"><select value={toolOrderForm.category} onChange={(e) => setToolOrderForm({ ...toolOrderForm, category: e.target.value })}>{toolCategories.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Brand"><input value={toolOrderForm.brand} onChange={(e) => setToolOrderForm({ ...toolOrderForm, brand: e.target.value })} /></Field>
+            <Field label="Qty"><input type="number" value={toolOrderForm.qty} onChange={(e) => setToolOrderForm({ ...toolOrderForm, qty: e.target.value })} /></Field>
+            <Field label="Requested by"><input value={toolOrderForm.requested_by} onChange={(e) => setToolOrderForm({ ...toolOrderForm, requested_by: e.target.value })} /></Field>
+            <Field label="Status"><select value={toolOrderForm.status} onChange={(e) => setToolOrderForm({ ...toolOrderForm, status: e.target.value })}><option>Requested</option><option>Approved</option><option>Ordered</option><option>Delivered</option><option>Cancelled</option></select></Field>
+            <Field label="Reason"><textarea rows={2} value={toolOrderForm.reason} onChange={(e) => setToolOrderForm({ ...toolOrderForm, reason: e.target.value })} /></Field>
+            <button className="primary" onClick={() => saveRow('tool_orders', toolOrderForm)}>Save tool order</button>
+          </div>
+
+          <div className="card form-card">
+            <h3>Employee issued tools</h3>
+            <Field label="Employee"><input value={employeeToolForm.employee_name} onChange={(e) => setEmployeeToolForm({ ...employeeToolForm, employee_name: e.target.value })} /></Field>
+            <Field label="Tool"><input value={employeeToolForm.tool_name} onChange={(e) => setEmployeeToolForm({ ...employeeToolForm, tool_name: e.target.value })} /></Field>
+            <Field label="Brand"><input value={employeeToolForm.brand} onChange={(e) => setEmployeeToolForm({ ...employeeToolForm, brand: e.target.value })} /></Field>
+            <Field label="Serial no"><input value={employeeToolForm.serial_no} onChange={(e) => setEmployeeToolForm({ ...employeeToolForm, serial_no: e.target.value })} /></Field>
+            <Field label="Issue date"><input type="date" value={employeeToolForm.issue_date} onChange={(e) => setEmployeeToolForm({ ...employeeToolForm, issue_date: e.target.value })} /></Field>
+            <Field label="Issued by"><input value={employeeToolForm.issued_by} onChange={(e) => setEmployeeToolForm({ ...employeeToolForm, issued_by: e.target.value })} /></Field>
+            <Field label="Status"><select value={employeeToolForm.status} onChange={(e) => setEmployeeToolForm({ ...employeeToolForm, status: e.target.value })}><option>Issued</option><option>Returned</option><option>Lost</option><option>Damaged</option></select></Field>
+            <button className="primary" onClick={() => saveRow('employee_tools', employeeToolForm)}>Save issued tool</button>
+          </div>
+        </div>
+
+        <div className="grid-2">
+          <div className="card"><h3>Tool inventory</h3><MiniTable rows={data.tools} columns={[
+            { key: 'tool_name', label: 'Tool' }, { key: 'category', label: 'Category' }, { key: 'brand', label: 'Brand' }, { key: 'stock_qty', label: 'Qty' }, { key: 'workshop_section', label: 'Section' }, { key: 'condition', label: 'Condition', render: (r) => <Badge value={r.condition} /> }
+          ]} /></div>
+          <div className="card"><h3>Employee issued tools</h3><MiniTable rows={data.employee_tools} columns={[
+            { key: 'employee_name', label: 'Employee' }, { key: 'tool_name', label: 'Tool' }, { key: 'serial_no', label: 'Serial' }, { key: 'issue_date', label: 'Issued' }, { key: 'issued_by', label: 'By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+          ]} /></div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderFabrication() {
+    return (
+      <div className="page-grid fabrication-page">
+        <SectionTitle title="Boiler Shop & Panel Beaters" subtitle="Material stock, machine-booked material requests and major ongoing department projects." />
+
+        <div className="stats-grid">
+          <StatCard title="Material stock" value={data.fabrication_stock.length} tone="blue" />
+          <StatCard title="Material requests" value={data.fabrication_requests.length} tone="orange" />
+          <StatCard title="Ongoing projects" value={metrics.fabProjects.length} tone="purple" />
+          <StatCard title="Low material" value={data.fabrication_stock.filter((x) => n(x.stock_qty) <= n(x.min_qty)).length} tone="red" />
+        </div>
+
+        <div className="grid-3">
+          <div className="card form-card accent-card">
+            <h3>Material stock</h3>
+            <Field label="Department"><select value={fabStockForm.department} onChange={(e) => setFabStockForm({ ...fabStockForm, department: e.target.value })}>{fabricationDepartments.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Material type"><select value={fabStockForm.material_type} onChange={(e) => setFabStockForm({ ...fabStockForm, material_type: e.target.value })}>{materialTypes.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Description"><input value={fabStockForm.description} onChange={(e) => setFabStockForm({ ...fabStockForm, description: e.target.value })} /></Field>
+            <Field label="Size/spec"><input value={fabStockForm.size_spec} onChange={(e) => setFabStockForm({ ...fabStockForm, size_spec: e.target.value })} /></Field>
+            <Field label="Qty"><input type="number" value={fabStockForm.stock_qty} onChange={(e) => setFabStockForm({ ...fabStockForm, stock_qty: e.target.value })} /></Field>
+            <Field label="Min qty"><input type="number" value={fabStockForm.min_qty} onChange={(e) => setFabStockForm({ ...fabStockForm, min_qty: e.target.value })} /></Field>
+            <Field label="Unit"><input value={fabStockForm.unit} onChange={(e) => setFabStockForm({ ...fabStockForm, unit: e.target.value })} /></Field>
+            <button className="primary" onClick={() => saveRow('fabrication_stock', fabStockForm)}>Save material</button>
+          </div>
+
+          <div className="card form-card">
+            <h3>Material request</h3>
+            <Field label="Department"><select value={fabRequestForm.department} onChange={(e) => setFabRequestForm({ ...fabRequestForm, department: e.target.value })}>{fabricationDepartments.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Fleet number"><input value={fabRequestForm.fleet_no} onChange={(e) => setFabRequestForm({ ...fabRequestForm, fleet_no: e.target.value })} /></Field>
+            <Field label="Requested by"><input value={fabRequestForm.requested_by} onChange={(e) => setFabRequestForm({ ...fabRequestForm, requested_by: e.target.value })} /></Field>
+            <Field label="Material type"><select value={fabRequestForm.material_type} onChange={(e) => setFabRequestForm({ ...fabRequestForm, material_type: e.target.value })}>{materialTypes.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Description"><input value={fabRequestForm.description} onChange={(e) => setFabRequestForm({ ...fabRequestForm, description: e.target.value })} /></Field>
+            <Field label="Qty"><input type="number" value={fabRequestForm.qty} onChange={(e) => setFabRequestForm({ ...fabRequestForm, qty: e.target.value })} /></Field>
+            <Field label="Project"><input value={fabRequestForm.project_name} onChange={(e) => setFabRequestForm({ ...fabRequestForm, project_name: e.target.value })} /></Field>
+            <Field label="Status"><select value={fabRequestForm.status} onChange={(e) => setFabRequestForm({ ...fabRequestForm, status: e.target.value })}><option>Requested</option><option>Approved</option><option>Issued</option><option>Ordered</option><option>Completed</option></select></Field>
+            <button className="primary" onClick={() => saveRow('fabrication_requests', fabRequestForm)}>Save request</button>
+          </div>
+
+          <div className="card form-card">
+            <h3>Major project</h3>
+            <Field label="Department"><select value={fabProjectForm.department} onChange={(e) => setFabProjectForm({ ...fabProjectForm, department: e.target.value })}>{fabricationDepartments.map((x) => <option key={x}>{x}</option>)}</select></Field>
+            <Field label="Project name"><input value={fabProjectForm.project_name} onChange={(e) => setFabProjectForm({ ...fabProjectForm, project_name: e.target.value })} /></Field>
+            <Field label="Fleet"><input value={fabProjectForm.fleet_no} onChange={(e) => setFabProjectForm({ ...fabProjectForm, fleet_no: e.target.value })} /></Field>
+            <Field label="Supervisor"><input value={fabProjectForm.supervisor} onChange={(e) => setFabProjectForm({ ...fabProjectForm, supervisor: e.target.value })} /></Field>
+            <Field label="Start"><input type="date" value={fabProjectForm.start_date} onChange={(e) => setFabProjectForm({ ...fabProjectForm, start_date: e.target.value })} /></Field>
+            <Field label="Target"><input type="date" value={fabProjectForm.target_date} onChange={(e) => setFabProjectForm({ ...fabProjectForm, target_date: e.target.value })} /></Field>
+            <Field label="Progress %"><input type="number" value={fabProjectForm.progress_percent} onChange={(e) => setFabProjectForm({ ...fabProjectForm, progress_percent: e.target.value })} /></Field>
+            <button className="primary" onClick={() => saveRow('fabrication_projects', fabProjectForm)}>Save project</button>
+          </div>
+        </div>
+
+        <div className="grid-3">
+          <div className="card"><h3>Stock</h3><MiniTable rows={data.fabrication_stock} columns={[
+            { key: 'department', label: 'Dept' }, { key: 'material_type', label: 'Type' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+          ]} /></div>
+          <div className="card"><h3>Requests</h3><MiniTable rows={data.fabrication_requests} columns={[
+            { key: 'department', label: 'Dept' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'requested_by', label: 'By' }, { key: 'description', label: 'Description' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+          ]} /></div>
+          <div className="card"><h3>Projects</h3><MiniTable rows={data.fabrication_projects} columns={[
+            { key: 'department', label: 'Dept' }, { key: 'project_name', label: 'Project' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'progress_percent', label: 'Progress %' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+          ]} /></div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderPhotos() {
+    return (
+      <div className="page-grid">
+        <SectionTitle title="Photos" subtitle="Upload machine, tyre, battery, breakdown, abuse and project photos." />
+        <div className="grid-2">
+          <div className="card form-card accent-card">
+            <h3>Add photo</h3>
+            <Field label="Fleet number"><input value={photoForm.fleet_no} onChange={(e) => setPhotoForm({ ...photoForm, fleet_no: e.target.value })} /></Field>
+            <Field label="Linked type"><select value={photoForm.linked_type} onChange={(e) => setPhotoForm({ ...photoForm, linked_type: e.target.value })}><option>Breakdown</option><option>Repair</option><option>Tyre</option><option>Battery</option><option>Operations</option><option>Boiler/Panel</option></select></Field>
+            <Field label="Caption"><input value={photoForm.caption} onChange={(e) => setPhotoForm({ ...photoForm, caption: e.target.value })} /></Field>
+            <Field label="Photo"><input type="file" accept="image/*" onChange={(e) => attachPhoto(e.target.files?.[0], (v) => setPhotoForm({ ...photoForm, image_data: v }))} /></Field>
+            {photoForm.image_data && <img className="thumb" src={photoForm.image_data} alt="Preview" />}
+            <button className="primary" onClick={() => saveRow('photo_logs', photoForm)}>Save photo</button>
+          </div>
+          <div className="card">
+            <h3>Photo register</h3>
+            <div className="photo-grid">
+              {data.photo_logs.map((p) => (
+                <div className="photo-card" key={p.id}>
+                  {p.image_data && <img src={p.image_data} alt={p.caption || 'Photo'} />}
+                  <b>{p.fleet_no || 'No fleet'}</b>
+                  <span>{p.linked_type} — {p.caption}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderReports() {
+    const deptCounts = Object.entries(data.fleet_machines.reduce((acc: Row, m) => {
+      const key = m.department || 'Unknown'
+      acc[key] = (acc[key] || 0) + 1
+      return acc
+    }, {})).map(([department, count]) => ({ id: department, department, count }))
+
+    const typeCounts = Object.entries(data.fleet_machines.reduce((acc: Row, m) => {
+      const key = m.machine_type || 'Unknown'
+      acc[key] = (acc[key] || 0) + 1
+      return acc
+    }, {})).map(([machine_type, count]) => ({ id: machine_type, machine_type, count }))
+
+    const fleetHistory = reportFleet
+      ? [...data.breakdowns, ...data.repairs, ...data.services, ...data.spares_orders, ...data.tyres, ...data.batteries].filter((r) =>
+          String(r.fleet_no || r.machine_fleet_no || '').toLowerCase() === reportFleet.toLowerCase()
+        )
+      : []
+
+    return (
+      <div className="page-grid reports-page">
+        <SectionTitle title="Reports" subtitle="Machine availability, breakdowns per department, fleet type, service history, orders and fleet-specific history." right={<button onClick={() => window.print()}>Print / Save PDF</button>} />
+
+        <div className="stats-grid">
+          <StatCard title="Fleet" value={data.fleet_machines.length} tone="blue" />
+          <StatCard title="Breakdowns" value={data.breakdowns.length} tone="red" />
+          <StatCard title="Services" value={data.services.length} tone="purple" />
+          <StatCard title="Orders" value={data.spares_orders.length + data.tyre_orders.length + data.battery_orders.length + data.hose_requests.length} tone="orange" />
+        </div>
+
+        <div className="grid-2">
+          <div className="card"><h3>Breakdown per department / fleet location</h3><MiniTable rows={deptCounts} columns={[
+            { key: 'department', label: 'Department' }, { key: 'count', label: 'Machines' }
+          ]} /></div>
+          <div className="card"><h3>Fleet type breakdown</h3><MiniTable rows={typeCounts} columns={[
+            { key: 'machine_type', label: 'Fleet type' }, { key: 'count', label: 'Machines' }
+          ]} /></div>
+        </div>
+
+        <div className="card">
+          <h3>Fleet history lookup</h3>
+          <div className="filters">
+            <input placeholder="Enter fleet number..." value={reportFleet} onChange={(e) => setReportFleet(e.target.value)} />
+          </div>
+          <MiniTable rows={fleetHistory} empty="Enter a fleet number to see history." columns={[
+            { key: 'fleet_no', label: 'Fleet', render: (r) => r.fleet_no || r.machine_fleet_no },
+            { key: 'fault', label: 'Fault/service/order', render: (r) => r.fault || r.service_type || r.description || r.part_no || r.serial_no || r.hose_type || '-' },
+            { key: 'status', label: 'Status', render: (r) => <Badge value={r.status || r.workflow_stage || r.stock_status} /> },
+            { key: 'created_at', label: 'Date', render: (r) => dateOnly(r.created_at || r.request_date || r.due_date) }
+          ]} />
+        </div>
+      </div>
+    )
+  }
+
+  function renderAdmin() {
+    return (
+      <div className="page-grid">
+        <SectionTitle title="Admin" subtitle="Sync, offline queue, data controls and quick checks." />
+        <div className="stats-grid">
+          <StatCard title="Online" value={online ? 'Yes' : 'No'} tone={online ? 'green' : 'red'} />
+          <StatCard title="Queue" value={queueCount} tone="orange" />
+          <StatCard title="Supabase" value={isSupabaseConfigured ? 'Set' : 'Missing'} tone={isSupabaseConfigured ? 'green' : 'red'} />
+          <StatCard title="Tables" value={TABLES.length} tone="blue" />
+        </div>
+        <div className="card">
+          <h3>Actions</h3>
+          <div className="quick-actions">
+            <button onClick={loadAll}>Reload from Supabase</button>
+            <button onClick={syncOfflineQueue}>Sync offline queue</button>
+            <button onClick={() => saveSnapshot(stripHeavyFileData(data))}>Save local snapshot</button>
+            <button className="danger-btn" onClick={() => { localStorage.removeItem('turbo-workshop-snapshot'); setMessage('Local snapshot cleared.') }}>Clear local snapshot</button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  function renderTab() {
+    if (tab === 'dashboard') return renderDashboard()
+    if (tab === 'fleet') return renderFleet()
+    if (tab === 'breakdowns') return renderBreakdowns()
+    if (tab === 'repairs') return renderRepairs()
+    if (tab === 'services') return renderServices()
+    if (tab === 'spares') return renderSpares()
+    if (tab === 'personnel') return renderPersonnel()
+    if (tab === 'tyres') return renderTyres()
+    if (tab === 'batteries') return renderBatteries()
+    if (tab === 'operations') return renderOperations()
+    if (tab === 'hoses') return renderHoses()
+    if (tab === 'tools') return renderTools()
+    if (tab === 'fabrication') return renderFabrication()
+    if (tab === 'photos') return renderPhotos()
+    if (tab === 'reports') return renderReports()
+    if (tab === 'admin') return renderAdmin()
+    return renderDashboard()
+  }
+
+  if (!session) {
+    return (
+      <main className="login-shell">
+        <div className="login-card glass">
+          <div className="brand-mark">TE</div>
+          <h1>Turbo Energy Workshop Control</h1>
+          <p className="muted">Fleet repairs, services, spares, personnel, tyres, batteries, hoses, tools and workshop projects.</p>
+          {message && <div className="message">{message}</div>}
+          <div className="form-card">
+            <Field label="Username"><input value={loginName} onChange={(e) => setLoginName(e.target.value)} /></Field>
+            <Field label="Password"><input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') handleLogin() }} /></Field>
+            <button className="primary wide" onClick={handleLogin}>Login</button>
+          </div>
+          <div className="login-help">
+            <b>Default logins</b><br />
+            admin / admin123<br />
+            admin workshop / workshop123<br />
+            foreman / foreman123<br />
+            user / user123
+          </div>
+        </div>
+      </main>
+    )
+  }
+
+  return (
+    <main className="app-shell">
+      <aside className="sidebar">
+        <div className="logo-block">
+          <div className="brand-mark small">TE</div>
+          <div>
+            <b>Turbo Energy</b>
+            <span>Workshop Control</span>
+          </div>
+        </div>
+
+        <nav>
+          {nav.map(([key, label]) => (
+            <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>
+              {label}
+            </button>
+          ))}
+        </nav>
+
+        <div className="sync-box">
+          <Badge value={online ? 'Online' : 'Offline'} />
+          <span>Queue: {queueCount}</span>
+          <span>Signed in: {session.username}</span>
+          <button onClick={logout}>Logout</button>
+        </div>
+      </aside>
+
+      <section className="workspace">
+        <div className="topbar">
+          <div>
+            <h1>{nav.find(([key]) => key === tab)?.[1] || 'Dashboard'}</h1>
+            <p>Navy/orange workshop system • laptop and phone friendly • online/offline records</p>
+          </div>
+          <div className="top-actions">
+            <button onClick={() => setTab('dashboard')}>Dashboard</button>
+            <button onClick={() => window.print()}>Print</button>
+            <button onClick={syncOfflineQueue}>Sync</button>
+          </div>
+        </div>
+
+        {message && <div className="message floating">{message}</div>}
+
+        <datalist id="fleet-list">
+          {data.fleet_machines.map((m) => <option key={m.id || m.fleet_no} value={m.fleet_no} />)}
+        </datalist>
+
+        {renderTab()}
+      </section>
+
+      {modal && <Modal title={modal.title} onClose={() => setModal(null)}>{modal.body}</Modal>}
+    </main>
+  )
+}
