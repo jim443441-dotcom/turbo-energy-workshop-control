@@ -130,7 +130,7 @@ const IMPORT_TARGETS: ImportTarget[] = [
   { table: 'fleet_machines', label: 'Fleet Register', description: 'Machine fleet numbers, type, hours, mileage, location and status.' },
   { table: 'personnel', label: 'Personnel Register', description: 'Workshop attendance, staff, shift, section, trade and leave balance.' },
   { table: 'leave_records', label: 'Leave / Off Schedule', description: 'LEAVE SUMMARY.xlsx, current leave, upcoming leave and past leave.' },
-  { table: 'services', label: 'Service Schedule', description: 'Service due list, job cards, supervisors and service history.' },
+  { table: 'services', label: 'Service Schedule', description: 'Turbo Mining service sheet, service interval, hours till due and status.' },
   { table: 'breakdowns', label: 'Breakdowns', description: 'Breakdown sheets, faults, spares ETA, fitters and availability.' },
   { table: 'repairs', label: 'Repairs / Job Cards', description: 'Repair jobs, assigned people, parts used and job cards.' },
   { table: 'spares', label: 'Spares Stock', description: 'Parts stock, part numbers, stock quantity, supplier and shelf.' },
@@ -152,6 +152,9 @@ const IMPORT_TARGETS: ImportTarget[] = [
 ]
 
 const shiftNames = ['Shift 1', 'Shift 2', 'Shift 3']
+const sections = ['WORKSHOPS', 'Workshop', 'Mechanical', 'Auto Electrical', 'Tyre Bay', 'Boiler Shop', 'Panel Beating', 'Stores', 'Wash Bay', 'Operations']
+const leaveTypes = ['Annual Leave', 'Sick Leave', 'Off Duty', 'Training', 'Unpaid Leave', 'AWOL']
+const orderStages = ['Requested', 'Awaiting Funding', 'Funded', 'Awaiting Delivery', 'Delivered', 'Cancelled']
 
 const personnelRoles = [
   'Manager',
@@ -173,10 +176,6 @@ const personnelRoles = [
   'Vacant'
 ]
 
-const sections = ['WORKSHOPS', 'Workshop', 'Mechanical', 'Auto Electrical', 'Tyre Bay', 'Boiler Shop', 'Panel Beating', 'Stores', 'Wash Bay', 'Operations']
-
-const leaveTypes = ['Annual Leave', 'Sick Leave', 'Off Duty', 'Training', 'Unpaid Leave', 'AWOL']
-
 const statuses = [
   'Available',
   'Open',
@@ -192,10 +191,13 @@ const statuses = [
   'Inactive',
   'Vacant',
   'On Leave',
-  'Off Duty'
+  'Off Duty',
+  'Scheduled',
+  'Upcoming',
+  'Due Soon',
+  'Due',
+  'Overdue'
 ]
-
-const orderStages = ['Requested', 'Awaiting Funding', 'Funded', 'Awaiting Delivery', 'Delivered', 'Cancelled']
 
 const SNAPSHOT_KEY = 'turbo-workshop-snapshot'
 const QUEUE_KEY = 'turbo-workshop-offline-queue'
@@ -210,29 +212,20 @@ const num = (value: any, fallback = 0) => {
 }
 
 function normal(value: any) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '')
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
 }
 
 function slug(value: any) {
-  return String(value || '')
-    .trim()
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
+  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
 
 function cleanRow(row: Row) {
   const out: Row = {}
-
   Object.entries(row).forEach(([key, value]) => {
     if (value === undefined || value === null) return
     if (typeof value === 'string' && value.trim() === '') return
     out[key] = value
   })
-
   return out
 }
 
@@ -244,7 +237,6 @@ function excelDateNumber(value: number) {
 
 function dateOnly(value: any) {
   if (!value) return ''
-
   if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10)
   if (typeof value === 'number' && value > 20000) return excelDateNumber(value)
 
@@ -264,72 +256,64 @@ function dateOnly(value: any) {
 
   const parsed = new Date(text)
   if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
-
   return ''
+}
+
+function addDaysToToday(days: number) {
+  if (!Number.isFinite(days)) return ''
+  const d = new Date()
+  d.setDate(d.getDate() + Math.ceil(days))
+  return d.toISOString().slice(0, 10)
 }
 
 function dateRange(value: any) {
   const text = String(value || '').trim()
   const matches = text.match(/\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/g) || []
-
   if (matches.length >= 2) return [dateOnly(matches[0]), dateOnly(matches[1])]
   if (matches.length === 1) return [dateOnly(matches[0]), dateOnly(matches[0])]
-
   return ['', '']
 }
 
 function daysInclusive(start: any, end: any) {
   const s = new Date(start)
   const e = new Date(end)
-
   if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0
-
   return Math.max(0, Math.floor((e.getTime() - s.getTime()) / 86400000) + 1)
 }
 
 function isCurrentLeave(row: Row) {
-  const start = row.start_date
-  const end = row.end_date
   const t = new Date(today()).getTime()
-  const s = new Date(start).getTime()
-  const e = new Date(end).getTime()
-
+  const s = new Date(row.start_date).getTime()
+  const e = new Date(row.end_date).getTime()
   return !Number.isNaN(s) && !Number.isNaN(e) && t >= s && t <= e
 }
 
 function isUpcomingLeave(row: Row) {
   const start = new Date(row.start_date).getTime()
   const t = new Date(today()).getTime()
-
   return !Number.isNaN(start) && start > t
 }
 
 function isPastLeave(row: Row) {
   const end = new Date(row.end_date).getTime()
   const t = new Date(today()).getTime()
-
   return !Number.isNaN(end) && end < t
 }
 
 function getCell(row: Row, aliases: string[]) {
   const keys = Object.keys(row)
-
   for (const alias of aliases) {
     const found = keys.find((key) => normal(key) === normal(alias))
     if (found && String(row[found] ?? '').trim() !== '') return row[found]
   }
-
   for (const alias of aliases) {
     const wanted = normal(alias)
-
     const found = keys.find((key) => {
       const actual = normal(key)
       return actual && wanted && (actual.includes(wanted) || wanted.includes(actual))
     })
-
     if (found && String(row[found] ?? '').trim() !== '') return row[found]
   }
-
   return ''
 }
 
@@ -337,55 +321,31 @@ function fullName(row: Row) {
   const first = getCell(row, ['FIRST NAME', 'FirstName', 'First Name', 'Forename'])
   const surname = getCell(row, ['SURNAME', 'Surname', 'Last Name'])
   const normalName = getCell(row, ['Name', 'Employee Name', 'Full Name'])
-
   const joined = `${String(first || '').trim()} ${String(surname || '').trim()}`.trim()
   return joined || String(normalName || '').trim()
 }
 
 function headerScore(cells: any[]) {
   const words = [
-    'fleet',
-    'machine',
-    'unit',
-    'equipment',
-    'firstname',
-    'first name',
-    'surname',
-    'employee',
-    'code',
-    'occupation',
-    'current job title',
-    'department',
-    'shift',
-    'dates',
-    'total',
-    'leave type',
-    'part no',
-    'description',
-    'qty',
-    'serial',
-    'status',
-    'requested by',
-    'supervisor',
-    'foreman'
+    'fleet', 'fleet no', 'machine', 'unit', 'equipment', 'description',
+    'firstname', 'surname', 'employee', 'code', 'occupation', 'current job title', 'department', 'shift',
+    'dates', 'total', 'leave type',
+    'odo reading', 'last service', 'service interval', 'next service type', 'hours till service due', 'percent done',
+    'part no', 'qty', 'serial', 'status', 'requested by', 'supervisor', 'foreman'
   ]
-
   let score = 0
-
   cells.forEach((cell) => {
     const text = normal(cell)
     words.forEach((word) => {
       if (text.includes(normal(word))) score += 1
     })
   })
-
   return score
 }
 
 async function readWorkbook(file: File) {
   const buffer = await file.arrayBuffer()
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
-
   const rows: Row[] = []
   const headings = new Set<string>()
   const allCells: any[][] = []
@@ -393,14 +353,11 @@ async function readWorkbook(file: File) {
   workbook.SheetNames.forEach((sheetName) => {
     const sheet = workbook.Sheets[sheetName]
     const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true }) as any[][]
-
     matrix.forEach((line) => allCells.push(line))
-
     if (!matrix.length) return
 
     let headerIndex = 0
     let bestScore = -1
-
     matrix.forEach((line, index) => {
       const score = headerScore(line)
       if (score > bestScore) {
@@ -409,23 +366,15 @@ async function readWorkbook(file: File) {
       }
     })
 
-    const headerRow = matrix[headerIndex] || []
-    const headerNames = headerRow.map((h, i) => {
+    const headerNames = (matrix[headerIndex] || []).map((h, i) => {
       const clean = String(h || '').trim()
       return clean || `Column ${i + 1}`
     })
-
     headerNames.forEach((h) => headings.add(h))
 
     matrix.slice(headerIndex + 1).forEach((line, offset) => {
-      const obj: Row = {
-        __sheet: sheetName,
-        __row: headerIndex + offset + 2,
-        __cells: line
-      }
-
+      const obj: Row = { __sheet: sheetName, __row: headerIndex + offset + 2, __cells: line }
       let filled = 0
-
       headerNames.forEach((heading, index) => {
         const value = line[index]
         if (value !== undefined && value !== null && String(value).trim() !== '') {
@@ -433,7 +382,6 @@ async function readWorkbook(file: File) {
           filled += 1
         }
       })
-
       if (filled > 0) rows.push(obj)
     })
   })
@@ -444,8 +392,7 @@ async function readWorkbook(file: File) {
 function fleetFromCells(cells: any[]) {
   const text = cells.map((c) => String(c || '')).join(' ')
   const parts = text.split(/[\s,;:/|]+/).map((x) => x.trim()).filter(Boolean)
-
-  const banned = new Set(['FLEET', 'MACHINE', 'EQUIPMENT', 'TYPE', 'DESCRIPTION', 'DATE', 'TOTAL', 'STATUS', 'DEPARTMENT', 'WORKSHOP'])
+  const banned = new Set(['FLEET', 'MACHINE', 'EQUIPMENT', 'TYPE', 'DESCRIPTION', 'DATE', 'TOTAL', 'STATUS', 'DEPARTMENT', 'WORKSHOP', 'SERVICE', 'INTERVAL'])
 
   for (const part of parts) {
     const clean = part.toUpperCase().replace(/[^A-Z0-9-]/g, '')
@@ -453,25 +400,28 @@ function fleetFromCells(cells: any[]) {
     if (banned.has(clean)) continue
     if (/^\d+$/.test(clean)) continue
     if (/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$/.test(clean)) continue
-
     if (/^[A-Z]{1,6}-?\d{1,6}[A-Z]?$/.test(clean)) return clean.replace(/-/g, '')
   }
-
   return ''
 }
 
 function inferMachineType(value: any, textValue = '') {
   const text = `${value} ${textValue}`.toUpperCase()
-
   if (text.includes('FEL') || text.includes('LOADER')) return 'FEL'
   if (text.includes('EXC') || text.includes('TEX') || text.includes('EXCAVATOR')) return 'Excavator'
   if (text.includes('DOZER') || text.includes('DZ')) return 'Dozer'
   if (text.includes('GRADER')) return 'Grader'
   if (text.includes('ROLLER')) return 'Roller'
   if (text.includes('ADT') || text.includes('HOWO') || text.includes('TRUCK') || text.includes('HT')) return 'Truck'
-  if (text.includes('LDV') || text.includes('AFX') || text.includes('AG')) return 'LDV'
-
+  if (text.includes('LDV') || text.includes('AFX') || text.includes('AG') || text.includes('S-VEHICLE')) return 'LDV'
   return 'Machine'
+}
+
+function serviceStatus(hoursTill: number, percentDone: number) {
+  if (hoursTill <= 0 || percentDone >= 1) return 'Due'
+  if (hoursTill <= 50 || percentDone >= 0.95) return 'Due Soon'
+  if (hoursTill <= 250 || percentDone >= 0.85) return 'Upcoming'
+  return 'Scheduled'
 }
 
 function parsePersonnel(row: Row) {
@@ -480,7 +430,6 @@ function parsePersonnel(row: Row) {
   const role = String(getCell(row, ['Occupation', 'CURRENT JOB TITLE', 'Current Job Title', 'Job Title', 'Trade', 'Role']) || 'Workshop Employee').trim()
   const section = String(getCell(row, ['Department', 'Dept', 'Section']) || 'Workshop').trim()
   const status = String(getCell(row, ['Status', 'Employment Status']) || 'Active').trim()
-
   if (!name) return null
   if (normal(name).includes('workshopdepartment')) return null
   if (normal(name).includes('firstname')) return null
@@ -506,20 +455,14 @@ function parseLeave(row: Row) {
   const employeeNo = String(getCell(row, ['Code', 'Employee Code', 'Employee No', 'Clock No', 'Emp No']) || '').trim()
   const role = String(getCell(row, ['Occupation', 'Current Job Title', 'Job Title', 'Trade', 'Role']) || '').trim()
   const section = String(getCell(row, ['Department', 'Dept', 'Section']) || 'Workshop').trim()
-
-  const datesText = getCell(row, ['DATES', 'Dates', 'Date Range', 'Leave Dates'])
-  const [rangeStart, rangeEnd] = dateRange(datesText)
-
+  const [rangeStart, rangeEnd] = dateRange(getCell(row, ['DATES', 'Dates', 'Date Range', 'Leave Dates']))
   const start = dateOnly(getCell(row, ['Start Date', 'Leave Start', 'From'])) || rangeStart
   const end = dateOnly(getCell(row, ['End Date', 'Leave End', 'To'])) || rangeEnd
-
   if (!name && !employeeNo) return null
   if (!start && !end) return null
-
   const leaveType = String(getCell(row, ['LEAVE TYPE', 'Leave Type', 'Type']) || 'Annual Leave').trim()
   const leaveDays = num(getCell(row, ['TOTAL', 'Total', 'Days', 'Leave Days']), daysInclusive(start, end))
   const id = `${employeeNo || slug(name)}-${start}-${end}-${slug(leaveType)}`
-
   return cleanRow({
     id,
     employee_no: employeeNo,
@@ -539,25 +482,70 @@ function parseLeave(row: Row) {
 function parseFleet(row: Row) {
   const cells = Array.isArray(row.__cells) ? row.__cells : Object.values(row)
   const cellText = cells.map((c) => String(c || '')).join(' ')
-
-  const fleetNo =
-    String(getCell(row, ['Fleet', 'Fleet No', 'Fleet Number', 'Machine', 'Machine No', 'Unit', 'Equipment', 'Plant No']) || '').trim() ||
-    fleetFromCells(cells)
-
+  const fleetNo = String(getCell(row, ['Fleet', 'FLEET No', 'Fleet No', 'Fleet Number', 'Machine', 'Machine No', 'Unit', 'Equipment', 'Plant No']) || '').trim() || fleetFromCells(cells)
   if (!fleetNo) return null
-
   return cleanRow({
     id: fleetNo,
     fleet_no: fleetNo,
     machine_type: String(getCell(row, ['Machine Type', 'Equipment Type', 'Type']) || '').trim() || inferMachineType(fleetNo, cellText),
-    make_model: String(getCell(row, ['Make Model', 'Make', 'Model', 'Description']) || '').trim(),
+    make_model: String(getCell(row, ['Make Model', 'Make', 'Model', 'Description', 'DESCRIPTION']) || '').trim(),
     reg_no: String(getCell(row, ['Reg', 'Registration', 'Reg No']) || '').trim(),
     department: String(getCell(row, ['Department', 'Dept', 'Section']) || 'Workshop').trim(),
     location: String(getCell(row, ['Location', 'Site']) || '').trim(),
-    hours: num(getCell(row, ['Hours', 'Hrs', 'HM', 'Hour Meter']), 0),
+    hours: num(getCell(row, ['Hours', 'Hrs', 'HM', 'Hour Meter', 'TOTAL HRS TO DATE', 'ODO READING CURRENT close']), 0),
     mileage: num(getCell(row, ['Mileage', 'KM', 'Odometer']), 0),
     status: String(getCell(row, ['Status', 'State']) || 'Available').trim(),
-    notes: String(getCell(row, ['Notes', 'Remarks']) || '').trim()
+    notes: String(getCell(row, ['Notes', 'Remarks', 'Coments', 'Comments']) || '').trim()
+  })
+}
+
+function parseService(row: Row) {
+  const cells = Array.isArray(row.__cells) ? row.__cells : Object.values(row)
+  const cellText = cells.map((c) => String(c || '')).join(' ')
+  const fleetNo = String(getCell(row, ['FLEET No', 'Fleet', 'Fleet No', 'Fleet Number', 'Machine', 'Unit']) || '').trim() || fleetFromCells(cells)
+  if (!fleetNo) return null
+  if (normal(fleetNo).includes('fleetno')) return null
+
+  const description = String(getCell(row, ['DESCRIPTION', 'Description', 'Machine Description']) || '').trim()
+  const currentReading = num(getCell(row, ['CURRENT ODO READING (HOURS)', 'ODO READING CURRENT (close)', 'ODO READING         CURRENT (close)', 'Current Reading', 'Current Hours']), 0)
+  const openingReading = num(getCell(row, ['ODO READING CURRENT (opening)', 'ODO READING         CURRENT (opening)', 'Opening Reading']), 0)
+  const dailyTotal = num(getCell(row, ['ODO READING Total', 'ODO READING         Total', 'Daily Hours', 'Hours Today']), 0)
+  const lastService = num(getCell(row, ['ODO READING AT LAST SERVICE', 'Last Service Hours', 'Last ODO Reading']), 0)
+  const serviceInterval = num(getCell(row, ['SERVICE INTERVAL', 'Service Interval']), 0)
+  const nextServiceType = String(getCell(row, ['NEXT SERVICE TYPE', 'Next Service Type', 'Service Type']) || 'Service').trim()
+  const nextServiceHours = num(getCell(row, ['ODO READING AT SERVICE', 'ODO READING      AT SERVICE', 'Next Service Hours', 'Service Due Hours']), 0)
+  const percentDoneRaw = num(getCell(row, ['PERCENT DONE', 'Percent Done']), 0)
+  const percentDone = percentDoneRaw > 1 ? percentDoneRaw / 100 : percentDoneRaw
+  const hoursTill = num(getCell(row, ['HOURS TILL SERVICE DUE', 'Hours Till Service Due', 'Hours To Service']), nextServiceHours && currentReading ? nextServiceHours - currentReading : 0)
+  const estimateDays = num(getCell(row, ['ESTIMATE DAYS TILL SERVICE', 'Estimate Days Till Service', 'Days Till Service']), 0)
+  const totalHours = num(getCell(row, ['TOTAL HRS TO DATE', 'Total Hrs To Date', 'Total Hours']), currentReading)
+  const comments = String(getCell(row, ['COMMENTS', 'Comments', 'Coments', 'Coments/ Filter change']) || '').trim()
+  const status = serviceStatus(hoursTill, percentDone)
+
+  return cleanRow({
+    id: `${fleetNo}-${nextServiceHours || lastService || currentReading}-${nextServiceType || 'service'}`,
+    fleet_no: fleetNo,
+    machine_type: inferMachineType(fleetNo, `${description} ${cellText}`),
+    description,
+    service_type: nextServiceType ? `Service ${nextServiceType}` : 'Service',
+    next_service_type: nextServiceType,
+    current_hours: currentReading,
+    opening_hours: openingReading,
+    daily_hours: dailyTotal,
+    last_service_hours: lastService,
+    service_interval: serviceInterval,
+    next_service_hours: nextServiceHours,
+    scheduled_hours: nextServiceHours || lastService + serviceInterval,
+    percent_done: Math.round(percentDone * 1000) / 10,
+    hours_till_service_due: Math.round(hoursTill * 10) / 10,
+    estimate_days_till_service: Math.round(estimateDays * 10) / 10,
+    total_hours_to_date: totalHours,
+    due_date: estimateDays ? addDaysToToday(estimateDays) : status === 'Due' ? today() : '',
+    supervisor: '',
+    technician: '',
+    job_card_no: '',
+    status,
+    notes: comments
   })
 }
 
@@ -568,27 +556,11 @@ function parseGeneric(table: TableName, row: Row) {
   const serial = String(getCell(row, ['Serial', 'Serial No', 'Serial Number']) || '').trim()
   const requestedBy = String(getCell(row, ['Requested By', 'Requester', 'Foreman']) || '').trim()
 
-  if (table === 'services') {
-    return cleanRow({
-      id: uid(),
-      fleet_no: fleetNo,
-      service_type: String(getCell(row, ['Service Type', 'Service', 'Type']) || 'Service').trim(),
-      due_date: dateOnly(getCell(row, ['Due Date', 'Date'])),
-      scheduled_hours: num(getCell(row, ['Scheduled Hours', 'Due Hours', 'Hours', 'HM']), 0),
-      completed_date: dateOnly(getCell(row, ['Completed Date', 'Done Date'])),
-      completed_hours: num(getCell(row, ['Completed Hours', 'Done Hours']), 0),
-      job_card_no: String(getCell(row, ['Job Card', 'Job Card No']) || '').trim(),
-      supervisor: String(getCell(row, ['Supervisor', 'Foreman']) || '').trim(),
-      technician: String(getCell(row, ['Technician', 'Fitter', 'Mechanic']) || '').trim(),
-      status: String(getCell(row, ['Status']) || 'Due').trim(),
-      notes: String(getCell(row, ['Notes', 'Remarks']) || '').trim()
-    })
-  }
+  if (table === 'services') return parseService(row)
 
   if (table === 'breakdowns') {
     return cleanRow({
-      id: uid(),
-      fleet_no: fleetNo,
+      id: uid(), fleet_no: fleetNo,
       fault: String(getCell(row, ['Fault', 'Problem', 'Breakdown', 'Defect', 'Description']) || '').trim(),
       category: String(getCell(row, ['Category', 'Section']) || 'Mechanical').trim(),
       reported_by: String(getCell(row, ['Reported By', 'Operator']) || '').trim(),
@@ -602,8 +574,7 @@ function parseGeneric(table: TableName, row: Row) {
 
   if (table === 'repairs') {
     return cleanRow({
-      id: uid(),
-      fleet_no: fleetNo,
+      id: uid(), fleet_no: fleetNo,
       job_card_no: String(getCell(row, ['Job Card', 'Job Card No']) || '').trim(),
       fault: String(getCell(row, ['Fault', 'Problem', 'Defect', 'Description']) || '').trim(),
       assigned_to: String(getCell(row, ['Assigned To', 'Fitter', 'Mechanic', 'Technician']) || '').trim(),
@@ -615,9 +586,7 @@ function parseGeneric(table: TableName, row: Row) {
 
   if (table === 'spares') {
     return cleanRow({
-      id: partNo || slug(description) || uid(),
-      part_no: partNo,
-      description,
+      id: partNo || slug(description) || uid(), part_no: partNo, description,
       section: String(getCell(row, ['Section', 'Department']) || 'Stores').trim(),
       machine_type: String(getCell(row, ['Machine Type', 'Type']) || '').trim(),
       stock_qty: num(getCell(row, ['Stock Qty', 'Stock', 'Balance', 'Qty', 'Quantity']), 0),
@@ -630,12 +599,8 @@ function parseGeneric(table: TableName, row: Row) {
 
   if (table === 'spares_orders') {
     return cleanRow({
-      id: uid(),
-      request_date: dateOnly(getCell(row, ['Request Date', 'Date'])) || today(),
-      machine_fleet_no: fleetNo,
-      requested_by: requestedBy,
-      part_no: partNo,
-      description,
+      id: uid(), request_date: dateOnly(getCell(row, ['Request Date', 'Date'])) || today(),
+      machine_fleet_no: fleetNo, requested_by: requestedBy, part_no: partNo, description,
       qty: num(getCell(row, ['Qty', 'Quantity']), 1),
       priority: String(getCell(row, ['Priority']) || 'Normal').trim(),
       workflow_stage: String(getCell(row, ['Stage', 'Workflow Stage', 'Status']) || 'Requested').trim(),
@@ -647,9 +612,7 @@ function parseGeneric(table: TableName, row: Row) {
 
   if (table === 'tyres') {
     return cleanRow({
-      id: serial || uid(),
-      serial_no: serial,
-      fleet_no: fleetNo,
+      id: serial || uid(), serial_no: serial, fleet_no: fleetNo,
       make: String(getCell(row, ['Make', 'Brand']) || '').trim(),
       company_no: String(getCell(row, ['Company No', 'Company Number']) || '').trim(),
       fitted_date: dateOnly(getCell(row, ['Fitted Date', 'Date Fitted', 'Fitment Date'])),
@@ -663,9 +626,7 @@ function parseGeneric(table: TableName, row: Row) {
 
   if (table === 'batteries') {
     return cleanRow({
-      id: serial || uid(),
-      serial_no: serial,
-      fleet_no: fleetNo,
+      id: serial || uid(), serial_no: serial, fleet_no: fleetNo,
       make: String(getCell(row, ['Make', 'Brand']) || '').trim(),
       volts: String(getCell(row, ['Volts', 'Voltage']) || '').trim(),
       fitment_date: dateOnly(getCell(row, ['Fitment Date', 'Date Fitted'])),
@@ -693,14 +654,8 @@ function parseGeneric(table: TableName, row: Row) {
 
   const hasSomething = fleetNo || partNo || description || serial || requestedBy
   if (!hasSomething) return null
-
   return cleanRow({
-    id: uid(),
-    fleet_no: fleetNo,
-    machine_fleet_no: fleetNo,
-    part_no: partNo,
-    description,
-    serial_no: serial,
+    id: uid(), fleet_no: fleetNo, machine_fleet_no: fleetNo, part_no: partNo, description, serial_no: serial,
     requested_by: requestedBy,
     qty: num(getCell(row, ['Qty', 'Quantity']), 1),
     stock_qty: num(getCell(row, ['Stock Qty', 'Stock', 'Balance', 'Qty']), 0),
@@ -711,54 +666,35 @@ function parseGeneric(table: TableName, row: Row) {
 
 function parseRows(table: TableName, rawRows: Row[], allCells: any[][]) {
   let rows: Row[] = []
-
-  if (table === 'personnel') {
-    rows = rawRows.map(parsePersonnel).filter(Boolean) as Row[]
-  } else if (table === 'leave_records') {
-    rows = rawRows.map(parseLeave).filter(Boolean) as Row[]
-  } else if (table === 'fleet_machines') {
+  if (table === 'personnel') rows = rawRows.map(parsePersonnel).filter(Boolean) as Row[]
+  else if (table === 'leave_records') rows = rawRows.map(parseLeave).filter(Boolean) as Row[]
+  else if (table === 'fleet_machines') {
     rows = rawRows.map(parseFleet).filter(Boolean) as Row[]
-
     if (!rows.length) {
       const map = new Map<string, Row>()
-
       allCells.forEach((line) => {
         const fleetNo = fleetFromCells(line)
         if (!fleetNo) return
-
         const text = line.map((x) => String(x || '')).join(' ')
-
-        map.set(fleetNo, {
-          id: fleetNo,
-          fleet_no: fleetNo,
-          machine_type: inferMachineType(fleetNo, text),
-          department: 'Workshop',
-          status: 'Available',
-          notes: text.slice(0, 160)
-        })
+        map.set(fleetNo, { id: fleetNo, fleet_no: fleetNo, machine_type: inferMachineType(fleetNo, text), department: 'Workshop', status: 'Available', notes: text.slice(0, 160) })
       })
-
       rows = Array.from(map.values())
     }
-  } else {
-    rows = rawRows.map((row) => parseGeneric(table, row)).filter(Boolean) as Row[]
-  }
+  } else if (table === 'services') rows = rawRows.map(parseService).filter(Boolean) as Row[]
+  else rows = rawRows.map((row) => parseGeneric(table, row)).filter(Boolean) as Row[]
 
   const map = new Map<string, Row>()
-
   rows.forEach((row) => {
-    const key =
-      table === 'personnel'
-        ? String(row.employee_no || row.name || row.id)
-        : table === 'fleet_machines'
-          ? String(row.fleet_no || row.id)
+    const key = table === 'personnel'
+      ? String(row.employee_no || row.name || row.id)
+      : table === 'fleet_machines'
+        ? String(row.fleet_no || row.id)
+        : table === 'services'
+          ? String(row.id || `${row.fleet_no}-${row.next_service_hours || row.scheduled_hours || row.service_type}`)
           : String(row.id || uid())
-
     if (!key.trim()) return
-
     map.set(key, { ...row, id: key })
   })
-
   return Array.from(map.values())
 }
 
@@ -776,7 +712,7 @@ function saveSnapshot(data: AppData) {
   try {
     localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({ updatedAt: nowIso(), data }))
   } catch {
-    // ignore localStorage limit
+    // browser storage can fill up when photos are saved
   }
 }
 
@@ -784,17 +720,7 @@ function addToOfflineQueue(table: TableName, rows: Row[]) {
   try {
     const raw = localStorage.getItem(QUEUE_KEY)
     const queue = raw ? JSON.parse(raw) : []
-
-    rows.forEach((row) => {
-      queue.push({
-        id: uid(),
-        table,
-        type: 'upsert',
-        payload: row,
-        createdAt: nowIso()
-      })
-    })
-
+    rows.forEach((row) => queue.push({ id: uid(), table, type: 'upsert', payload: row, createdAt: nowIso() }))
     localStorage.setItem(QUEUE_KEY, JSON.stringify(queue))
   } catch {
     // ignore queue failure
@@ -803,27 +729,22 @@ function addToOfflineQueue(table: TableName, rows: Row[]) {
 
 function mergeRows(existing: Row[], incoming: Row[]) {
   const map = new Map<string, Row>()
-
   existing.forEach((row) => {
     const key = String(row.id || row.fleet_no || row.employee_no || row.name || JSON.stringify(row))
     map.set(key, row)
   })
-
   incoming.forEach((row) => {
     const key = String(row.id || row.fleet_no || row.employee_no || row.name || JSON.stringify(row))
     map.set(key, { ...map.get(key), ...row })
   })
-
   return Array.from(map.values())
 }
 
 function statusClass(value: any) {
   const text = String(value || '').toLowerCase()
-
-  if (text.includes('open') || text.includes('break') || text.includes('awaiting') || text.includes('low') || text.includes('due') || text.includes('critical')) return 'danger'
-  if (text.includes('request') || text.includes('fund') || text.includes('progress') || text.includes('normal') || text.includes('vacant')) return 'warn'
-  if (text.includes('active') || text.includes('available') || text.includes('complete') || text.includes('delivered') || text.includes('approved') || text.includes('stock')) return 'good'
-
+  if (text.includes('overdue') || text === 'due' || text.includes('open') || text.includes('break') || text.includes('awaiting') || text.includes('low') || text.includes('critical')) return 'danger'
+  if (text.includes('due soon') || text.includes('upcoming') || text.includes('request') || text.includes('fund') || text.includes('progress') || text.includes('normal') || text.includes('vacant')) return 'warn'
+  if (text.includes('scheduled') || text.includes('active') || text.includes('available') || text.includes('complete') || text.includes('delivered') || text.includes('approved') || text.includes('stock')) return 'good'
   return 'neutral'
 }
 
@@ -832,12 +753,7 @@ function Badge({ value }: { value: any }) {
 }
 
 function Field({ label, children }: { label: string; children: any }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      {children}
-    </label>
-  )
+  return <label className="field"><span>{label}</span>{children}</label>
 }
 
 function Input({ value, onChange, placeholder = '', type = 'text' }: { value: any; onChange: (value: any) => void; placeholder?: string; type?: string }) {
@@ -845,53 +761,22 @@ function Input({ value, onChange, placeholder = '', type = 'text' }: { value: an
 }
 
 function Select({ value, onChange, options }: { value: any; onChange: (value: any) => void; options: string[] }) {
-  return (
-    <select value={value ?? ''} onChange={(e) => onChange(e.target.value)}>
-      {options.map((option) => <option key={option}>{option}</option>)}
-    </select>
-  )
+  return <select value={value ?? ''} onChange={(e) => onChange(e.target.value)}>{options.map((option) => <option key={option}>{option}</option>)}</select>
 }
 
 function StatCard({ title, value, detail, tone = 'blue', onClick, active = false }: { title: string; value: any; detail?: string; tone?: string; onClick?: () => void; active?: boolean }) {
-  return (
-    <button type="button" className={`stat-card ${tone} ${active ? 'selected-stat' : ''}`} onClick={onClick}>
-      <span>{title}</span>
-      <b>{value}</b>
-      {detail && <small>{detail}</small>}
-    </button>
-  )
+  return <button type="button" className={`stat-card ${tone} ${active ? 'selected-stat' : ''}`} onClick={onClick}><span>{title}</span><b>{value}</b>{detail && <small>{detail}</small>}</button>
 }
 
-function MiniTable({
-  rows,
-  columns,
-  empty = 'No records yet.',
-  onRowClick,
-  activeId
-}: {
-  rows: Row[]
-  columns: { key: string; label: string; render?: (row: Row) => any }[]
-  empty?: string
-  onRowClick?: (row: Row) => void
-  activeId?: string
-}) {
+function MiniTable({ rows, columns, empty = 'No records yet.', onRowClick, activeId }: { rows: Row[]; columns: { key: string; label: string; render?: (row: Row) => any }[]; empty?: string; onRowClick?: (row: Row) => void; activeId?: string }) {
   if (!rows.length) return <div className="empty">{empty}</div>
-
   return (
     <div className="table-wrap">
       <table>
-        <thead>
-          <tr>
-            {columns.map((col) => <th key={col.key}>{col.label}</th>)}
-          </tr>
-        </thead>
+        <thead><tr>{columns.map((col) => <th key={col.key}>{col.label}</th>)}</tr></thead>
         <tbody>
           {rows.map((row) => (
-            <tr
-              key={row.id || JSON.stringify(row)}
-              className={`${onRowClick ? 'click-row' : ''} ${activeId && String(row.id) === activeId ? 'active-row' : ''}`}
-              onClick={() => onRowClick?.(row)}
-            >
+            <tr key={row.id || JSON.stringify(row)} className={`${onRowClick ? 'click-row' : ''} ${activeId && String(row.id) === activeId ? 'active-row' : ''}`} onClick={() => onRowClick?.(row)}>
               {columns.map((col) => <td key={col.key}>{col.render ? col.render(row) : String(row[col.key] ?? '')}</td>)}
             </tr>
           ))}
@@ -902,15 +787,29 @@ function MiniTable({
 }
 
 function PageTitle({ title, subtitle, right }: { title: string; subtitle?: string; right?: any }) {
-  return (
-    <div className="page-title">
-      <div>
-        <h1>{title}</h1>
-        {subtitle && <p>{subtitle}</p>}
-      </div>
-      {right && <div className="page-actions">{right}</div>}
-    </div>
-  )
+  return <div className="page-title"><div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>{right && <div className="page-actions">{right}</div>}</div>
+}
+
+async function filesToPhotoRows(files: FileList | null, linkedType: string, fleetNo = '', caption = '') {
+  if (!files || !files.length) return []
+  const selected = Array.from(files).filter((file) => file.type.startsWith('image/'))
+  const rows = await Promise.all(selected.map((file) => new Promise<Row>((resolve) => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      resolve({
+        id: uid(),
+        fleet_no: fleetNo,
+        linked_type: linkedType,
+        caption: caption || file.name,
+        notes: `${linkedType} photo uploaded ${new Date().toLocaleString()}`,
+        file_name: file.name,
+        image_data: String(reader.result || ''),
+        created_at: nowIso()
+      })
+    }
+    reader.readAsDataURL(file)
+  })))
+  return rows
 }
 
 export default function Home() {
@@ -922,7 +821,7 @@ export default function Home() {
   const [message, setMessage] = useState('')
   const [online, setOnline] = useState(true)
 
-  const [selectedImport, setSelectedImport] = useState<TableName>('personnel')
+  const [selectedImport, setSelectedImport] = useState<TableName>('services')
   const [importSearch, setImportSearch] = useState('')
   const [importStatus, setImportStatus] = useState('Ready')
   const [importFile, setImportFile] = useState('')
@@ -939,7 +838,6 @@ export default function Home() {
   const [quickForm, setQuickForm] = useState<Row>({})
 
   const selectedImportTarget = IMPORT_TARGETS.find((target) => target.table === selectedImport) || IMPORT_TARGETS[0]
-
   const filteredTargets = useMemo(() => {
     const q = importSearch.toLowerCase()
     return IMPORT_TARGETS.filter((target) => `${target.label} ${target.description} ${target.table}`.toLowerCase().includes(q))
@@ -949,51 +847,41 @@ export default function Home() {
     const totalFleet = data.fleet_machines.length
     const breakdowns = data.breakdowns.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
     const repairs = data.repairs.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
-    const servicesDue = data.services.filter((row) => String(row.status || '').toLowerCase().includes('due'))
+    const servicesDue = data.services.filter((row) => ['due', 'overdue', 'due soon'].includes(String(row.status || '').toLowerCase()))
+    const serviceDueNow = data.services.filter((row) => ['due', 'overdue'].includes(String(row.status || '').toLowerCase()))
     const currentLeave = data.leave_records.filter(isCurrentLeave)
     const foremen = data.personnel.filter((row) => String(row.role || '').toLowerCase().includes('foreman') && !String(row.employment_status || '').toLowerCase().includes('inactive'))
     const lowSpares = data.spares.filter((row) => num(row.stock_qty) <= num(row.min_qty, 1))
     const hoseRequests = data.hose_requests.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
     const toolOrders = data.tool_orders.filter((row) => !String(row.status || '').toLowerCase().includes('delivered'))
-
-    return { totalFleet, breakdowns, repairs, servicesDue, currentLeave, foremen, lowSpares, hoseRequests, toolOrders }
+    return { totalFleet, breakdowns, repairs, servicesDue, serviceDueNow, currentLeave, foremen, lowSpares, hoseRequests, toolOrders }
   }, [data])
 
   useEffect(() => {
     const savedSession = localStorage.getItem('turbo-workshop-session')
     if (savedSession) setSession(JSON.parse(savedSession))
-
     const snapshot = readSnapshot()
     if (snapshot) setData({ ...emptyData, ...snapshot })
-
     setOnline(typeof navigator === 'undefined' ? true : navigator.onLine)
-
     const up = () => setOnline(true)
     const down = () => setOnline(false)
-
     window.addEventListener('online', up)
     window.addEventListener('offline', down)
-
     loadAll()
-
     return () => {
       window.removeEventListener('online', up)
       window.removeEventListener('offline', down)
     }
   }, [])
 
-  useEffect(() => {
-    saveSnapshot(data)
-  }, [data])
+  useEffect(() => { saveSnapshot(data) }, [data])
 
   function login() {
     const found = loginUsers.find((user) => user.username.toLowerCase() === loginName.toLowerCase().trim() && user.password === loginPass)
-
     if (!found) {
       setMessage('Wrong username or password.')
       return
     }
-
     const next = { username: found.username, role: found.role }
     setSession(next)
     localStorage.setItem('turbo-workshop-session', JSON.stringify(next))
@@ -1007,29 +895,22 @@ export default function Home() {
 
   async function loadAll() {
     if (!supabase || !isSupabaseConfigured) return
-
     const current = readSnapshot() || emptyData
     const next: AppData = { ...emptyData, ...current }
-
     for (const table of TABLES) {
       try {
         const { data: rows } = await supabase.from(table as any).select('*').limit(10000)
-
-        if (rows && Array.isArray(rows)) {
-          next[table] = mergeRows(next[table] || [], rows as Row[])
-        }
+        if (rows && Array.isArray(rows)) next[table] = mergeRows(next[table] || [], rows as Row[])
       } catch {
         // leave local data in place
       }
     }
-
     setData(next)
     saveSnapshot(next)
   }
 
   async function saveRows(table: TableName, rows: Row[]) {
     const stamped = rows.map((row) => cleanRow({ ...row, id: row.id || uid(), updated_at: nowIso() }))
-
     setData((prev) => {
       const next = { ...prev, [table]: mergeRows(prev[table] || [], stamped) }
       saveSnapshot(next)
@@ -1043,27 +924,51 @@ export default function Home() {
     }
 
     let uploaded = 0
-
     for (let i = 0; i < stamped.length; i += 50) {
       const chunk = stamped.slice(i, i + 50)
       const { error } = await supabase.from(table as any).upsert(chunk, { onConflict: 'id' })
-
       if (error) {
         addToOfflineQueue(table, chunk)
         setMessage(`Saved locally because Supabase rejected the upload: ${error.message}`)
         return
       }
-
       uploaded += chunk.length
       setImportStatus(`Uploaded ${uploaded}/${stamped.length} records...`)
     }
-
     setMessage(`Saved ${stamped.length} record(s) online.`)
+  }
+
+  async function savePhotoRows(rows: Row[]) {
+    if (!rows.length) return
+    setData((prev) => {
+      const next = { ...prev, photo_logs: mergeRows(prev.photo_logs || [], rows) }
+      saveSnapshot(next)
+      return next
+    })
+
+    if (!supabase || !isSupabaseConfigured || !navigator.onLine) {
+      setMessage(`Saved ${rows.length} photo(s) locally.`)
+      return
+    }
+
+    const safeRows = rows.map((row) => cleanRow({
+      id: row.id,
+      fleet_no: row.fleet_no || '',
+      linked_type: row.linked_type || 'Photo',
+      caption: row.caption || '',
+      notes: row.notes || ''
+    }))
+
+    try {
+      await supabase.from('photo_logs' as any).upsert(safeRows, { onConflict: 'id' })
+    } catch {
+      // photo image data stays local so the app does not break when storage is not set up
+    }
+    setMessage(`Saved ${rows.length} photo(s).`)
   }
 
   async function handleExcelUpload(table: TableName, file?: File) {
     if (!file) return
-
     setBusyImport(true)
     setImportFile(file.name)
     setImportStatus(`Reading ${file.name}...`)
@@ -1073,15 +978,12 @@ export default function Home() {
     try {
       const parsed = await readWorkbook(file)
       setImportHeadings(parsed.headings)
-
       const rows = parseRows(table, parsed.rows, parsed.allCells)
       setImportPreview(rows.slice(0, 15))
-
       if (!rows.length) {
         setImportStatus(`No usable rows found for ${IMPORT_TARGETS.find((t) => t.table === table)?.label || table}.`)
         return
       }
-
       await saveRows(table, rows)
       setImportStatus(`Uploaded ${rows.length} records to ${IMPORT_TARGETS.find((t) => t.table === table)?.label || table}.`)
     } catch (err: any) {
@@ -1091,12 +993,16 @@ export default function Home() {
     }
   }
 
+  async function handlePhotoUpload(files: FileList | null, linkedType: string, fleetNo = '', caption = '') {
+    const rows = await filesToPhotoRows(files, linkedType, fleetNo, caption)
+    await savePhotoRows(rows)
+  }
+
   function personNameFromLeave(row: Row) {
     const code = String(row.employee_no || '').trim()
     const rawName = String(row.person_name || '').trim()
     const matchByCode = data.personnel.find((p) => String(p.employee_no || '').trim() === code || String(p.employee_no || '').trim() === rawName)
     const matchByName = data.personnel.find((p) => normal(p.name) === normal(rawName))
-
     return matchByCode?.name || matchByName?.name || rawName || code || 'Unknown'
   }
 
@@ -1120,7 +1026,6 @@ export default function Home() {
       phone: row.phone || '',
       notes: row.notes || ''
     })
-
     setTimeout(() => document.getElementById('employee-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
   }
 
@@ -1131,7 +1036,6 @@ export default function Home() {
 
   async function savePersonForm() {
     const id = personForm.id || personForm.employee_no || slug(personForm.name) || uid()
-
     await saveRows('personnel', [{
       ...personForm,
       id,
@@ -1144,7 +1048,6 @@ export default function Home() {
       leave_balance_days: num(personForm.leave_balance_days, 30),
       leave_taken_days: num(personForm.leave_taken_days, 0)
     }])
-
     setEditingPersonId(id)
   }
 
@@ -1161,13 +1064,11 @@ export default function Home() {
       reason: row.reason || '',
       status: row.status || 'Approved'
     })
-
     setTimeout(() => document.getElementById('leave-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
   }
 
   async function saveLeaveForm() {
     const id = leaveForm.id || `${leaveForm.employee_no || slug(leaveForm.person_name)}-${leaveForm.start_date}-${leaveForm.end_date}-${slug(leaveForm.leave_type)}`
-
     await saveRows('leave_records', [{
       ...leaveForm,
       id,
@@ -1178,30 +1079,49 @@ export default function Home() {
       days: daysInclusive(leaveForm.start_date, leaveForm.end_date),
       status: leaveForm.status || 'Approved'
     }])
-
     setEditingLeaveId(id)
+  }
+
+  function PhotoUploadBox({ linkedType, fleetNo = '' }: { linkedType: string; fleetNo?: string }) {
+    return (
+      <div className="photo-upload-mini">
+        <span>Upload photos for {linkedType}</span>
+        <input type="file" accept="image/*" multiple onChange={(e) => { handlePhotoUpload(e.target.files, linkedType, fleetNo); e.currentTarget.value = '' }} />
+      </div>
+    )
+  }
+
+  function PhotoGallery({ linkedType, fleetNo = '', limit = 8 }: { linkedType?: string; fleetNo?: string; limit?: number }) {
+    const photos = data.photo_logs
+      .filter((p) => (!linkedType || String(p.linked_type || '') === linkedType) && (!fleetNo || String(p.fleet_no || '') === fleetNo))
+      .slice(-limit)
+      .reverse()
+
+    if (!photos.length) return <div className="empty">No photos uploaded yet.</div>
+    return (
+      <div className="photo-grid">
+        {photos.map((photo) => (
+          <div className="photo-card" key={photo.id}>
+            {photo.image_data ? <img src={photo.image_data} alt={photo.caption || 'Workshop photo'} /> : <div className="photo-placeholder">Photo</div>}
+            <b>{photo.caption || 'Photo'}</b>
+            <small>{photo.fleet_no || photo.linked_type || ''}</small>
+          </div>
+        ))}
+      </div>
+    )
   }
 
   function renderLogin() {
     return (
       <main className="login-shell">
         <style>{baseStyles}</style>
-
         <div className="login-card">
           <div className="logo-box">TE</div>
           <h1>Turbo Energy Workshop Control</h1>
           <p>Workshop fleet repairs, services, spares, tyres, batteries, personnel and operations tracking.</p>
-
-          <Field label="Username">
-            <Input value={loginName} onChange={setLoginName} />
-          </Field>
-
-          <Field label="Password">
-            <Input value={loginPass} onChange={setLoginPass} type="password" />
-          </Field>
-
+          <Field label="Username"><Input value={loginName} onChange={setLoginName} /></Field>
+          <Field label="Password"><Input value={loginPass} onChange={setLoginPass} type="password" /></Field>
           <button className="primary full" onClick={login}>Login</button>
-
           {message && <div className="message">{message}</div>}
         </div>
       </main>
@@ -1216,69 +1136,33 @@ export default function Home() {
           subtitle="Current shift, foremen, breakdowns, services, spares, hoses, tools, tyres, batteries and projects in one live control room."
           right={<><Badge value="Current shift working" /><Badge value={today()} /></>}
         />
-
         <div className="stats">
           <StatCard title="Total Fleet" value={dashboard.totalFleet} detail="Registered machines" onClick={() => setTab('fleet')} />
           <StatCard title="Machines on Breakdown" value={dashboard.breakdowns.length} detail="Open breakdown records" tone="purple" onClick={() => setTab('breakdowns')} />
           <StatCard title="Machines Being Worked On" value={dashboard.repairs.length} detail="Active repairs" tone="brown" onClick={() => setTab('repairs')} />
-          <StatCard title="Services Due" value={dashboard.servicesDue.length} detail="Service today/due" tone="indigo" onClick={() => setTab('services')} />
+          <StatCard title="Services Due" value={dashboard.serviceDueNow.length} detail="Only due / overdue" tone="indigo" onClick={() => setTab('services')} />
           <StatCard title="People Off" value={dashboard.currentLeave.length} detail="Leave/sick/off duty" tone="steel" onClick={() => setTab('personnel')} />
           <StatCard title="Foremen On Duty" value={dashboard.foremen.length} detail="Loaded foremen" tone="green" onClick={() => setTab('personnel')} />
           <StatCard title="Hose Requests" value={dashboard.hoseRequests.length} detail="Pending hoses/fittings" onClick={() => setTab('hoses')} />
           <StatCard title="Tool Orders" value={dashboard.toolOrders.length} detail="Requested tools" tone="brown" onClick={() => setTab('tools')} />
         </div>
-
         <div className="grid-2">
           <section className="card">
             <PageTitle title="Machines on breakdown / under repair" right={<button onClick={() => setTab('breakdowns')}>Open breakdowns</button>} />
-            <MiniTable
-              rows={dashboard.breakdowns.slice(0, 8)}
-              empty="No open breakdowns."
-              columns={[
-                { key: 'fleet_no', label: 'Fleet' },
-                { key: 'fault', label: 'Fault' },
-                { key: 'assigned_to', label: 'Assigned' },
-                { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
-              ]}
-            />
+            <MiniTable rows={dashboard.breakdowns.slice(0, 8)} empty="No open breakdowns." columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
           </section>
-
           <section className="card">
-            <PageTitle title="Machines on service today" right={<button onClick={() => setTab('services')}>Open services</button>} />
-            <MiniTable
-              rows={dashboard.servicesDue.slice(0, 8)}
-              empty="No services due."
-              columns={[
-                { key: 'fleet_no', label: 'Fleet' },
-                { key: 'service_type', label: 'Service' },
-                { key: 'due_date', label: 'Due Date' },
-                { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
-              ]}
-            />
+            <PageTitle title="Machines due for service" right={<button onClick={() => setTab('services')}>Open services</button>} />
+            <MiniTable rows={dashboard.servicesDue.slice(0, 8)} empty="No due services." columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'hours_till_service_due', label: 'Hours Left' }, { key: 'due_date', label: 'Due Date' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
           </section>
-
           <section className="card">
             <PageTitle title="Foremen on duty" right={<button onClick={() => setTab('personnel')}>Personnel</button>} />
-            <MiniTable
-              rows={dashboard.foremen.slice(0, 8)}
-              empty="No foremen loaded yet."
-              columns={[
-                { key: 'name', label: 'Name' },
-                { key: 'shift', label: 'Shift' },
-                { key: 'section', label: 'Section' },
-                { key: 'employment_status', label: 'Status', render: (r) => <Badge value={r.employment_status} /> }
-              ]}
-            />
+            <MiniTable rows={dashboard.foremen.slice(0, 8)} empty="No foremen loaded yet." columns={[{ key: 'name', label: 'Name' }, { key: 'shift', label: 'Shift' }, { key: 'section', label: 'Section' }, { key: 'employment_status', label: 'Status', render: (r) => <Badge value={r.employment_status} /> }]} />
           </section>
-
           <section className="card">
             <PageTitle title="Workshop alerts" right={<button onClick={() => setTab('reports')}>Reports</button>} />
-            <div className="badge-row">
-              <Badge value={`Low spares: ${dashboard.lowSpares.length}`} />
-              <Badge value={`Tyres due: ${data.tyre_measurements.length}`} />
-              <Badge value={`Batteries due: ${data.battery_orders.length}`} />
-              <Badge value={`Projects: ${data.fabrication_projects.length}`} />
-            </div>
+            <div className="badge-row"><Badge value={`Low spares: ${dashboard.lowSpares.length}`} /><Badge value={`Services due/soon: ${dashboard.servicesDue.length}`} /><Badge value={`Tyres due: ${data.tyre_measurements.length}`} /><Badge value={`Projects: ${data.fabrication_projects.length}`} /></div>
+            <PhotoUploadBox linkedType="Dashboard" />
           </section>
         </div>
       </div>
@@ -1288,96 +1172,32 @@ export default function Home() {
   function renderImporter() {
     return (
       <div>
-        <PageTitle
-          title="Excel Importer"
-          subtitle="Upload Excel files here. This fixes personnel, leave, fleet and all workshop register uploads."
-          right={<Badge value={isSupabaseConfigured ? 'Supabase connected' : 'Local mode'} />}
-        />
-
+        <PageTitle title="Excel Importer" subtitle="Upload Excel files here. Service sheets now calculate due status from Hours Till Service Due instead of marking everything due." right={<Badge value={isSupabaseConfigured ? 'Supabase connected' : 'Local mode'} />} />
         <div className="import-layout">
           <aside className="card">
             <h2>Choose register</h2>
             <p>Select what the Excel file is for.</p>
-
             <input placeholder="Search register..." value={importSearch} onChange={(e) => setImportSearch(e.target.value)} />
-
             <div className="import-list">
               {filteredTargets.map((target) => (
-                <button
-                  key={target.table}
-                  className={selectedImport === target.table ? 'active import-btn' : 'import-btn'}
-                  onClick={() => {
-                    setSelectedImport(target.table)
-                    setImportStatus('Ready')
-                    setImportFile('')
-                    setImportHeadings([])
-                    setImportPreview([])
-                  }}
-                >
-                  <b>{target.label}</b>
-                  <small>{target.description}</small>
+                <button key={target.table} className={selectedImport === target.table ? 'active import-btn' : 'import-btn'} onClick={() => { setSelectedImport(target.table); setImportStatus('Ready'); setImportFile(''); setImportHeadings([]); setImportPreview([]) }}>
+                  <b>{target.label}</b><small>{target.description}</small>
                 </button>
               ))}
             </div>
           </aside>
-
           <section>
             <div className="card">
-              <PageTitle
-                title={selectedImportTarget.label}
-                subtitle={selectedImportTarget.description}
-                right={<Badge value={selectedImportTarget.table} />}
-              />
-
+              <PageTitle title={selectedImportTarget.label} subtitle={selectedImportTarget.description} right={<Badge value={selectedImportTarget.table} />} />
               <div className="upload-box">
-                <input
-                  type="file"
-                  accept=".xlsx,.xls,.csv"
-                  disabled={busyImport}
-                  onChange={(e) => {
-                    handleExcelUpload(selectedImport, e.target.files?.[0])
-                    e.currentTarget.value = ''
-                  }}
-                />
-                <p>
-                  Personnel reads FIRST NAME, SURNAME, CURRENT JOB TITLE and Department.
-                  Leave reads Code, FirstName, Surname, Occupation, Department, DATES, TOTAL and LEAVE TYPE.
-                  Fleet scans for fleet numbers even when headings are poor.
-                </p>
+                <input type="file" accept=".xlsx,.xls,.csv" disabled={busyImport} onChange={(e) => { handleExcelUpload(selectedImport, e.target.files?.[0]); e.currentTarget.value = '' }} />
+                <p>Service sheet reads FLEET No, ODO READING AT LAST SERVICE, SERVICE INTERVAL, NEXT SERVICE TYPE, ODO READING AT SERVICE, PERCENT DONE, HOURS TILL SERVICE DUE, ESTIMATE DAYS TILL SERVICE and comments.</p>
               </div>
-
               <div className="message">{importStatus}</div>
-
-              <div className="meta-grid">
-                <div><span>Selected</span><b>{selectedImportTarget.label}</b></div>
-                <div><span>Table</span><b>{selectedImportTarget.table}</b></div>
-                <div><span>File</span><b>{importFile || 'None'}</b></div>
-                <div><span>Mode</span><b>Upsert / Update</b></div>
-              </div>
+              <div className="meta-grid"><div><span>Selected</span><b>{selectedImportTarget.label}</b></div><div><span>Table</span><b>{selectedImportTarget.table}</b></div><div><span>File</span><b>{importFile || 'None'}</b></div><div><span>Mode</span><b>Upsert / Update</b></div></div>
             </div>
-
-            <div className="card">
-              <h2>Headings found</h2>
-              {importHeadings.length ? (
-                <div className="chip-row">
-                  {importHeadings.map((h) => <span className="chip" key={h}>{h}</span>)}
-                </div>
-              ) : (
-                <div className="empty">No file loaded yet.</div>
-              )}
-            </div>
-
-            <div className="card">
-              <h2>Preview before save</h2>
-              {importPreview.length ? (
-                <MiniTable
-                  rows={importPreview}
-                  columns={Object.keys(importPreview[0]).filter((k) => !k.startsWith('__')).slice(0, 10).map((key) => ({ key, label: key }))}
-                />
-              ) : (
-                <div className="empty">After upload, mapped rows will show here.</div>
-              )}
-            </div>
+            <div className="card"><h2>Headings found</h2>{importHeadings.length ? <div className="chip-row">{importHeadings.map((h) => <span className="chip" key={h}>{h}</span>)}</div> : <div className="empty">No file loaded yet.</div>}</div>
+            <div className="card"><h2>Preview before save</h2>{importPreview.length ? <MiniTable rows={importPreview} columns={Object.keys(importPreview[0]).filter((k) => !k.startsWith('__')).slice(0, 10).map((key) => ({ key, label: key }))} /> : <div className="empty">After upload, mapped rows will show here.</div>}</div>
           </section>
         </div>
       </div>
@@ -1385,47 +1205,25 @@ export default function Home() {
   }
 
   function ExcelButton({ table }: { table: TableName }) {
-    return (
-      <label className="excel-button">
-        Upload Excel
-        <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => handleExcelUpload(table, e.target.files?.[0])} />
-      </label>
-    )
+    return <label className="excel-button">Upload Excel<input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => { handleExcelUpload(table, e.target.files?.[0]); e.currentTarget.value = '' }} /></label>
   }
 
   function renderFleet() {
     return (
       <div>
-        <PageTitle title="Fleet Register" subtitle="Machines, fleet numbers, machine types, hours, mileage and status." right={<ExcelButton table="fleet_machines" />} />
-
-        <section className="card">
-          <h2>Add machine</h2>
-          <div className="form-grid">
-            <Field label="Fleet number"><Input value={machineForm.fleet_no} onChange={(v) => setMachineForm({ ...machineForm, fleet_no: v })} /></Field>
-            <Field label="Machine type"><Input value={machineForm.machine_type} onChange={(v) => setMachineForm({ ...machineForm, machine_type: v })} /></Field>
-            <Field label="Make / Model"><Input value={machineForm.make_model} onChange={(v) => setMachineForm({ ...machineForm, make_model: v })} /></Field>
-            <Field label="Department"><Select value={machineForm.department} onChange={(v) => setMachineForm({ ...machineForm, department: v })} options={sections} /></Field>
-            <Field label="Location"><Input value={machineForm.location} onChange={(v) => setMachineForm({ ...machineForm, location: v })} /></Field>
-            <Field label="Hours"><Input type="number" value={machineForm.hours} onChange={(v) => setMachineForm({ ...machineForm, hours: v })} /></Field>
-            <Field label="Mileage"><Input type="number" value={machineForm.mileage} onChange={(v) => setMachineForm({ ...machineForm, mileage: v })} /></Field>
-            <Field label="Status"><Select value={machineForm.status} onChange={(v) => setMachineForm({ ...machineForm, status: v })} options={statuses} /></Field>
-          </div>
-          <button className="primary" onClick={() => saveRows('fleet_machines', [{ ...machineForm, id: machineForm.fleet_no || uid() }])}>Save machine</button>
-        </section>
-
-        <section className="card">
-          <MiniTable
-            rows={data.fleet_machines}
-            columns={[
-              { key: 'fleet_no', label: 'Fleet' },
-              { key: 'machine_type', label: 'Type' },
-              { key: 'make_model', label: 'Make / Model' },
-              { key: 'department', label: 'Department' },
-              { key: 'hours', label: 'Hours' },
-              { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
-            ]}
-          />
-        </section>
+        <PageTitle title="Fleet Register" subtitle="Machines, fleet numbers, machine types, hours, mileage and status." right={<><ExcelButton table="fleet_machines" /><PhotoUploadBox linkedType="Fleet" /></>} />
+        <section className="card"><h2>Add machine</h2><div className="form-grid">
+          <Field label="Fleet number"><Input value={machineForm.fleet_no} onChange={(v) => setMachineForm({ ...machineForm, fleet_no: v })} /></Field>
+          <Field label="Machine type"><Input value={machineForm.machine_type} onChange={(v) => setMachineForm({ ...machineForm, machine_type: v })} /></Field>
+          <Field label="Make / Model"><Input value={machineForm.make_model} onChange={(v) => setMachineForm({ ...machineForm, make_model: v })} /></Field>
+          <Field label="Department"><Select value={machineForm.department} onChange={(v) => setMachineForm({ ...machineForm, department: v })} options={sections} /></Field>
+          <Field label="Location"><Input value={machineForm.location} onChange={(v) => setMachineForm({ ...machineForm, location: v })} /></Field>
+          <Field label="Hours"><Input type="number" value={machineForm.hours} onChange={(v) => setMachineForm({ ...machineForm, hours: v })} /></Field>
+          <Field label="Mileage"><Input type="number" value={machineForm.mileage} onChange={(v) => setMachineForm({ ...machineForm, mileage: v })} /></Field>
+          <Field label="Status"><Select value={machineForm.status} onChange={(v) => setMachineForm({ ...machineForm, status: v })} options={statuses} /></Field>
+        </div><button className="primary" onClick={() => saveRows('fleet_machines', [{ ...machineForm, id: machineForm.fleet_no || uid() }])}>Save machine</button></section>
+        <section className="card"><MiniTable rows={data.fleet_machines} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'machine_type', label: 'Type' }, { key: 'make_model', label: 'Make / Model' }, { key: 'department', label: 'Department' }, { key: 'hours', label: 'Hours' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section>
+        <section className="card"><h2>Fleet photos</h2><PhotoGallery linkedType="Fleet" /></section>
       </div>
     )
   }
@@ -1434,74 +1232,24 @@ export default function Home() {
     const currentLeave = data.leave_records.filter(isCurrentLeave)
     const upcomingLeave = data.leave_records.filter(isUpcomingLeave)
     const pastLeave = data.leave_records.filter(isPastLeave)
-
-    const selectedLeaveRows =
-      leaveView === 'current'
-        ? currentLeave
-        : leaveView === 'upcoming'
-          ? upcomingLeave
-          : pastLeave
-
-    const selectedLeaveTitle =
-      leaveView === 'current'
-        ? 'Current leave / off list'
-        : leaveView === 'upcoming'
-          ? 'Upcoming leave list'
-          : 'Past leave history'
+    const selectedLeaveRows = leaveView === 'current' ? currentLeave : leaveView === 'upcoming' ? upcomingLeave : pastLeave
+    const selectedLeaveTitle = leaveView === 'current' ? 'Current leave / off list' : leaveView === 'upcoming' ? 'Upcoming leave list' : 'Past leave history'
 
     return (
       <div>
-        <PageTitle
-          title="Personnel, Shifts and Leave"
-          subtitle="Click an employee to edit details or assign them to Shift 1, Shift 2 or Shift 3. Click leave cards to open the correct leave list."
-          right={<ExcelButton table="personnel" />}
-        />
-
+        <PageTitle title="Personnel, Shifts and Leave" subtitle="Click an employee to edit details or assign them to Shift 1, Shift 2 or Shift 3. Click leave cards to open the correct leave list." right={<><ExcelButton table="personnel" /><PhotoUploadBox linkedType="Personnel" /></>} />
         <div className="stats">
           <StatCard title="Employees" value={data.personnel.length} detail="Loaded personnel" onClick={() => document.getElementById('personnel-table')?.scrollIntoView({ behavior: 'smooth' })} />
           <StatCard title="Current Leave / Off" value={currentLeave.length} detail="Away today" tone="brown" active={leaveView === 'current'} onClick={() => clickLeaveCard('current')} />
           <StatCard title="Upcoming Leave" value={upcomingLeave.length} detail="Future leave records" tone="indigo" active={leaveView === 'upcoming'} onClick={() => clickLeaveCard('upcoming')} />
           <StatCard title="Past Leave Records" value={pastLeave.length} detail="History" tone="green" active={leaveView === 'past'} onClick={() => clickLeaveCard('past')} />
         </div>
-
         <section className="card" id="leave-list">
-          <PageTitle
-            title={selectedLeaveTitle}
-            subtitle="Click any leave row to edit dates, type or status."
-            right={
-              <div className="button-row">
-                <button className={leaveView === 'current' ? 'active-small' : ''} onClick={() => setLeaveView('current')}>Current</button>
-                <button className={leaveView === 'upcoming' ? 'active-small' : ''} onClick={() => setLeaveView('upcoming')}>Upcoming</button>
-                <button className={leaveView === 'past' ? 'active-small' : ''} onClick={() => setLeaveView('past')}>Past</button>
-              </div>
-            }
-          />
-
-          <MiniTable
-            rows={selectedLeaveRows}
-            empty={`No ${leaveView} leave records.`}
-            onRowClick={editLeave}
-            activeId={editingLeaveId}
-            columns={[
-              { key: 'person_name', label: 'Name', render: (r) => personNameFromLeave(r) },
-              { key: 'employee_no', label: 'Emp No' },
-              { key: 'leave_type', label: 'Type' },
-              { key: 'start_date', label: 'Start' },
-              { key: 'end_date', label: 'End' },
-              { key: 'days', label: 'Days' },
-              { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
-            ]}
-          />
+          <PageTitle title={selectedLeaveTitle} subtitle="Click any leave row to edit dates, type or status." right={<div className="button-row"><button className={leaveView === 'current' ? 'active-small' : ''} onClick={() => setLeaveView('current')}>Current</button><button className={leaveView === 'upcoming' ? 'active-small' : ''} onClick={() => setLeaveView('upcoming')}>Upcoming</button><button className={leaveView === 'past' ? 'active-small' : ''} onClick={() => setLeaveView('past')}>Past</button></div>} />
+          <MiniTable rows={selectedLeaveRows} empty={`No ${leaveView} leave records.`} onRowClick={editLeave} activeId={editingLeaveId} columns={[{ key: 'person_name', label: 'Name', render: (r) => personNameFromLeave(r) }, { key: 'employee_no', label: 'Emp No' }, { key: 'leave_type', label: 'Type' }, { key: 'start_date', label: 'Start' }, { key: 'end_date', label: 'End' }, { key: 'days', label: 'Days' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
         </section>
-
         <div className="grid-2">
-          <section className="card" id="employee-editor">
-            <PageTitle
-              title={editingPersonId ? 'Edit employee / assign shift' : 'Add employee / slot'}
-              subtitle={editingPersonId ? 'You are editing the clicked employee. Change shift, role, section or status, then save.' : 'Add a new employee or vacant manpower slot.'}
-              right={editingPersonId && <Badge value="Editing" />}
-            />
-
+          <section className="card" id="employee-editor"><PageTitle title={editingPersonId ? 'Edit employee / assign shift' : 'Add employee / slot'} subtitle={editingPersonId ? 'You are editing the clicked employee. Change shift, role, section or status, then save.' : 'Add a new employee or vacant manpower slot.'} right={editingPersonId && <Badge value="Editing" />} />
             <div className="form-grid">
               <Field label="Employee no"><Input value={personForm.employee_no} onChange={(v) => setPersonForm({ ...personForm, employee_no: v })} /></Field>
               <Field label="Name"><Input value={personForm.name} onChange={(v) => setPersonForm({ ...personForm, name: v })} /></Field>
@@ -1513,36 +1261,11 @@ export default function Home() {
               <Field label="Leave balance"><Input type="number" value={personForm.leave_balance_days} onChange={(v) => setPersonForm({ ...personForm, leave_balance_days: v })} /></Field>
               <Field label="Leave taken"><Input type="number" value={personForm.leave_taken_days} onChange={(v) => setPersonForm({ ...personForm, leave_taken_days: v })} /></Field>
               <Field label="Notes"><Input value={personForm.notes} onChange={(v) => setPersonForm({ ...personForm, notes: v })} /></Field>
-            </div>
-
-            <div className="button-row">
-              <button className="primary" onClick={savePersonForm}>{editingPersonId ? 'Save employee changes' : 'Save employee'}</button>
-              <button onClick={clearPersonForm}>Clear / new employee</button>
-            </div>
+            </div><div className="button-row"><button className="primary" onClick={savePersonForm}>{editingPersonId ? 'Save employee changes' : 'Save employee'}</button><button onClick={clearPersonForm}>Clear / new employee</button></div>
           </section>
-
-          <section className="card">
-            <h2>Upload personnel / leave Excel</h2>
-            <div className="upload-stack">
-              <label>
-                <span>Personnel Excel</span>
-                <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => handleExcelUpload('personnel', e.target.files?.[0])} />
-              </label>
-              <label>
-                <span>Leave Summary Excel</span>
-                <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => handleExcelUpload('leave_records', e.target.files?.[0])} />
-              </label>
-            </div>
-          </section>
+          <section className="card"><h2>Upload personnel / leave Excel</h2><div className="upload-stack"><label><span>Personnel Excel</span><input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => handleExcelUpload('personnel', e.target.files?.[0])} /></label><label><span>Leave Summary Excel</span><input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => handleExcelUpload('leave_records', e.target.files?.[0])} /></label></div><PhotoUploadBox linkedType="Personnel" /></section>
         </div>
-
-        <section className="card" id="leave-editor">
-          <PageTitle
-            title={editingLeaveId ? 'Edit leave / off record' : 'Leave / off schedule'}
-            subtitle={editingLeaveId ? 'You are editing the clicked leave record.' : 'Create leave/off/sick records. The app calculates days automatically.'}
-            right={editingLeaveId && <Badge value="Editing leave" />}
-          />
-
+        <section className="card" id="leave-editor"><PageTitle title={editingLeaveId ? 'Edit leave / off record' : 'Leave / off schedule'} subtitle={editingLeaveId ? 'You are editing the clicked leave record.' : 'Create leave/off/sick records. The app calculates days automatically.'} right={editingLeaveId && <Badge value="Editing leave" />} />
           <div className="form-grid">
             <Field label="Employee"><Input value={leaveForm.person_name} onChange={(v) => setLeaveForm({ ...leaveForm, person_name: v })} /></Field>
             <Field label="Employee no"><Input value={leaveForm.employee_no} onChange={(v) => setLeaveForm({ ...leaveForm, employee_no: v })} /></Field>
@@ -1552,53 +1275,38 @@ export default function Home() {
             <Field label="Status"><Select value={leaveForm.status} onChange={(v) => setLeaveForm({ ...leaveForm, status: v })} options={['Approved', 'Pending', 'Rejected']} /></Field>
             <Field label="Reason"><Input value={leaveForm.reason || ''} onChange={(v) => setLeaveForm({ ...leaveForm, reason: v })} /></Field>
             <Field label="Calculated days"><Input value={daysInclusive(leaveForm.start_date, leaveForm.end_date)} onChange={() => {}} /></Field>
-          </div>
-
-          <div className="button-row">
-            <button className="primary" onClick={saveLeaveForm}>{editingLeaveId ? 'Save leave changes' : 'Save leave'}</button>
-            <button onClick={() => {
-              setEditingLeaveId('')
-              setLeaveForm({ id: '', employee_no: '', person_name: '', leave_type: 'Annual Leave', start_date: today(), end_date: today(), status: 'Approved' })
-            }}>Clear / new leave</button>
-          </div>
+          </div><div className="button-row"><button className="primary" onClick={saveLeaveForm}>{editingLeaveId ? 'Save leave changes' : 'Save leave'}</button><button onClick={() => { setEditingLeaveId(''); setLeaveForm({ id: '', employee_no: '', person_name: '', leave_type: 'Annual Leave', start_date: today(), end_date: today(), status: 'Approved' }) }}>Clear / new leave</button></div>
         </section>
+        <div className="grid-2"><section className="card" id="personnel-table"><PageTitle title="Personnel Register" subtitle="Click a person to load them into the editor above." /><MiniTable rows={data.personnel} onRowClick={editPerson} activeId={editingPersonId} columns={[{ key: 'employee_no', label: 'Emp No' }, { key: 'name', label: 'Name' }, { key: 'shift', label: 'Shift' }, { key: 'role', label: 'Role' }, { key: 'section', label: 'Section' }, { key: 'employment_status', label: 'Status', render: (r) => <Badge value={r.employment_status} /> }]} /></section><section className="card"><h2>Shift breakdown</h2><MiniTable rows={shiftNames.map((shift) => ({ id: shift, shift, employees: data.personnel.filter((p) => String(p.shift || '') === shift && String(p.employment_status || '').toLowerCase() !== 'vacant').length, vacancies: data.personnel.filter((p) => String(p.shift || '') === shift && String(p.employment_status || '').toLowerCase() === 'vacant').length }))} columns={[{ key: 'shift', label: 'Shift' }, { key: 'employees', label: 'Employees' }, { key: 'vacancies', label: 'Vacant slots' }]} /></section></div>
+      </div>
+    )
+  }
 
-        <div className="grid-2">
-          <section className="card" id="personnel-table">
-            <PageTitle title="Personnel Register" subtitle="Click a person to load them into the editor above." />
-
-            <MiniTable
-              rows={data.personnel}
-              onRowClick={editPerson}
-              activeId={editingPersonId}
-              columns={[
-                { key: 'employee_no', label: 'Emp No' },
-                { key: 'name', label: 'Name' },
-                { key: 'shift', label: 'Shift' },
-                { key: 'role', label: 'Role' },
-                { key: 'section', label: 'Section' },
-                { key: 'employment_status', label: 'Status', render: (r) => <Badge value={r.employment_status} /> }
-              ]}
-            />
-          </section>
-
-          <section className="card">
-            <h2>Shift breakdown</h2>
-            <MiniTable
-              rows={shiftNames.map((shift) => ({
-                id: shift,
-                shift,
-                employees: data.personnel.filter((p) => String(p.shift || '') === shift && String(p.employment_status || '').toLowerCase() !== 'vacant').length,
-                vacancies: data.personnel.filter((p) => String(p.shift || '') === shift && String(p.employment_status || '').toLowerCase() === 'vacant').length
-              }))}
-              columns={[
-                { key: 'shift', label: 'Shift' },
-                { key: 'employees', label: 'Employees' },
-                { key: 'vacancies', label: 'Vacant slots' }
-              ]}
-            />
-          </section>
-        </div>
+  function renderServices() {
+    const due = data.services.filter((r) => ['due', 'overdue'].includes(String(r.status || '').toLowerCase()))
+    const dueSoon = data.services.filter((r) => String(r.status || '').toLowerCase() === 'due soon')
+    const upcoming = data.services.filter((r) => String(r.status || '').toLowerCase() === 'upcoming')
+    const scheduled = data.services.filter((r) => String(r.status || '').toLowerCase() === 'scheduled')
+    const columns = [
+      { key: 'fleet_no', label: 'Fleet' },
+      { key: 'machine_type', label: 'Type' },
+      { key: 'service_type', label: 'Service' },
+      { key: 'current_hours', label: 'Current' },
+      { key: 'last_service_hours', label: 'Last Service' },
+      { key: 'service_interval', label: 'Interval' },
+      { key: 'next_service_hours', label: 'Next Service' },
+      { key: 'hours_till_service_due', label: 'Hours Left' },
+      { key: 'estimate_days_till_service', label: 'Days' },
+      { key: 'status', label: 'Status', render: (r: Row) => <Badge value={r.status} /> }
+    ]
+    return (
+      <div>
+        <PageTitle title="Services" subtitle="Service sheet now separates Due, Due Soon, Upcoming and Scheduled instead of marking every machine due." right={<><ExcelButton table="services" /><PhotoUploadBox linkedType="Services" /></>} />
+        <div className="stats"><StatCard title="Due Now" value={due.length} detail="0 hours or overdue" tone="brown" /><StatCard title="Due Soon" value={dueSoon.length} detail="≤ 50 hours or 95%" tone="purple" /><StatCard title="Upcoming" value={upcoming.length} detail="≤ 250 hours or 85%" tone="indigo" /><StatCard title="Scheduled" value={scheduled.length} detail="Not due" tone="green" /></div>
+        <section className="card"><h2>Due / overdue service</h2><MiniTable rows={due} empty="No services due now." columns={columns} /></section>
+        <section className="card"><h2>Due soon</h2><MiniTable rows={dueSoon} empty="No services due soon." columns={columns} /></section>
+        <section className="card"><h2>All imported service sheet records</h2><MiniTable rows={data.services} columns={columns} /></section>
+        <section className="card"><h2>Service photos</h2><PhotoGallery linkedType="Services" /></section>
       </div>
     )
   }
@@ -1606,66 +1314,38 @@ export default function Home() {
   function renderGenericPage(title: string, subtitle: string, table: TableName, columns: { key: string; label: string; render?: (row: Row) => any }[]) {
     return (
       <div>
-        <PageTitle title={title} subtitle={subtitle} right={<ExcelButton table={table} />} />
-
-        <section className="card">
-          <h2>Quick add</h2>
-          <div className="form-grid">
-            <Field label="Fleet / Machine"><Input value={quickForm.fleet_no || quickForm.machine_fleet_no || ''} onChange={(v) => setQuickForm({ ...quickForm, fleet_no: v, machine_fleet_no: v })} /></Field>
-            <Field label="Description / Fault / Item"><Input value={quickForm.description || quickForm.fault || quickForm.tool_name || ''} onChange={(v) => setQuickForm({ ...quickForm, description: v, fault: v, tool_name: v })} /></Field>
-            <Field label="Requested / Assigned by"><Input value={quickForm.requested_by || quickForm.assigned_to || ''} onChange={(v) => setQuickForm({ ...quickForm, requested_by: v, assigned_to: v })} /></Field>
-            <Field label="Status"><Select value={quickForm.status || 'Requested'} onChange={(v) => setQuickForm({ ...quickForm, status: v })} options={statuses} /></Field>
-            <Field label="Qty"><Input type="number" value={quickForm.qty || 1} onChange={(v) => setQuickForm({ ...quickForm, qty: v })} /></Field>
-            <Field label="ETA / Date"><Input type="date" value={quickForm.eta || today()} onChange={(v) => setQuickForm({ ...quickForm, eta: v, request_date: v })} /></Field>
-          </div>
-          <button className="primary" onClick={() => saveRows(table, [{ ...quickForm, id: uid(), request_date: quickForm.request_date || today() }])}>Save record</button>
-        </section>
-
-        <section className="card">
-          <MiniTable rows={data[table]} columns={columns} />
-        </section>
+        <PageTitle title={title} subtitle={subtitle} right={<><ExcelButton table={table} /><PhotoUploadBox linkedType={title} /></>} />
+        <section className="card"><h2>Quick add</h2><div className="form-grid">
+          <Field label="Fleet / Machine"><Input value={quickForm.fleet_no || quickForm.machine_fleet_no || ''} onChange={(v) => setQuickForm({ ...quickForm, fleet_no: v, machine_fleet_no: v })} /></Field>
+          <Field label="Description / Fault / Item"><Input value={quickForm.description || quickForm.fault || quickForm.tool_name || ''} onChange={(v) => setQuickForm({ ...quickForm, description: v, fault: v, tool_name: v })} /></Field>
+          <Field label="Requested / Assigned by"><Input value={quickForm.requested_by || quickForm.assigned_to || ''} onChange={(v) => setQuickForm({ ...quickForm, requested_by: v, assigned_to: v })} /></Field>
+          <Field label="Status"><Select value={quickForm.status || 'Requested'} onChange={(v) => setQuickForm({ ...quickForm, status: v })} options={statuses} /></Field>
+          <Field label="Qty"><Input type="number" value={quickForm.qty || 1} onChange={(v) => setQuickForm({ ...quickForm, qty: v })} /></Field>
+          <Field label="ETA / Date"><Input type="date" value={quickForm.eta || today()} onChange={(v) => setQuickForm({ ...quickForm, eta: v, request_date: v })} /></Field>
+        </div><button className="primary" onClick={() => saveRows(table, [{ ...quickForm, id: uid(), request_date: quickForm.request_date || today() }])}>Save record</button><PhotoUploadBox linkedType={title} fleetNo={quickForm.fleet_no || quickForm.machine_fleet_no || ''} /></section>
+        <section className="card"><MiniTable rows={data[table]} columns={columns} /></section>
+        <section className="card"><h2>{title} photos</h2><PhotoGallery linkedType={title} /></section>
       </div>
     )
   }
 
   function renderReports() {
-    const byDepartment = data.fleet_machines.reduce((acc: Row, row) => {
-      const key = row.department || 'Unknown'
-      acc[key] = (acc[key] || 0) + 1
-      return acc
-    }, {})
-
-    const byType = data.fleet_machines.reduce((acc: Row, row) => {
-      const key = row.machine_type || 'Unknown'
-      acc[key] = (acc[key] || 0) + 1
-      return acc
-    }, {})
-
+    const byDepartment = data.fleet_machines.reduce((acc: Row, row) => { const key = row.department || 'Unknown'; acc[key] = (acc[key] || 0) + 1; return acc }, {})
+    const byType = data.fleet_machines.reduce((acc: Row, row) => { const key = row.machine_type || 'Unknown'; acc[key] = (acc[key] || 0) + 1; return acc }, {})
     return (
       <div>
-        <PageTitle title="Reports" subtitle="Machine availability, breakdowns by department, fleet type and workshop pressure points." right={<button onClick={() => window.print()}>Print</button>} />
+        <PageTitle title="Reports" subtitle="Machine availability, service due status, breakdowns by department, fleet type and workshop pressure points." right={<><button onClick={() => window.print()}>Print</button><PhotoUploadBox linkedType="Reports" /></>} />
+        <div className="grid-2"><section className="card"><h2>Fleet by department</h2><MiniTable rows={Object.entries(byDepartment).map(([department, count]) => ({ id: department, department, count }))} columns={[{ key: 'department', label: 'Department' }, { key: 'count', label: 'Machines' }]} /></section><section className="card"><h2>Fleet by type</h2><MiniTable rows={Object.entries(byType).map(([machine_type, count]) => ({ id: machine_type, machine_type, count }))} columns={[{ key: 'machine_type', label: 'Type' }, { key: 'count', label: 'Machines' }]} /></section><section className="card"><h2>Open breakdowns</h2><MiniTable rows={dashboard.breakdowns} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'fault', label: 'Fault' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Service due / soon</h2><MiniTable rows={dashboard.servicesDue} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'service_type', label: 'Service' }, { key: 'hours_till_service_due', label: 'Hours Left' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div>
+      </div>
+    )
+  }
 
-        <div className="grid-2">
-          <section className="card">
-            <h2>Fleet by department</h2>
-            <MiniTable rows={Object.entries(byDepartment).map(([department, count]) => ({ id: department, department, count }))} columns={[{ key: 'department', label: 'Department' }, { key: 'count', label: 'Machines' }]} />
-          </section>
-
-          <section className="card">
-            <h2>Fleet by type</h2>
-            <MiniTable rows={Object.entries(byType).map(([machine_type, count]) => ({ id: machine_type, machine_type, count }))} columns={[{ key: 'machine_type', label: 'Type' }, { key: 'count', label: 'Machines' }]} />
-          </section>
-
-          <section className="card">
-            <h2>Open breakdowns</h2>
-            <MiniTable rows={dashboard.breakdowns} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'fault', label: 'Fault' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
-          </section>
-
-          <section className="card">
-            <h2>Low stock</h2>
-            <MiniTable rows={dashboard.lowSpares} columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }]} />
-          </section>
-        </div>
+  function renderPhotos() {
+    return (
+      <div>
+        <PageTitle title="Photos" subtitle="Workshop photos uploaded from any page. Images preview locally; captions sync when Supabase allows." right={<PhotoUploadBox linkedType="General" />} />
+        <section className="card"><PhotoGallery limit={200} /></section>
+        <section className="card"><MiniTable rows={data.photo_logs} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'linked_type', label: 'Page' }, { key: 'caption', label: 'Caption' }, { key: 'notes', label: 'Notes' }]} /></section>
       </div>
     )
   }
@@ -1675,184 +1355,27 @@ export default function Home() {
     if (tab === 'importer') return renderImporter()
     if (tab === 'fleet') return renderFleet()
     if (tab === 'personnel') return renderPersonnel()
+    if (tab === 'services') return renderServices()
     if (tab === 'reports') return renderReports()
+    if (tab === 'photos') return renderPhotos()
 
-    if (tab === 'breakdowns') return renderGenericPage('Breakdowns', 'Breakdown reports, faults, spares ETA and assigned fitters.', 'breakdowns', [
-      { key: 'fleet_no', label: 'Fleet' },
-      { key: 'fault', label: 'Fault' },
-      { key: 'assigned_to', label: 'Assigned' },
-      { key: 'spare_eta', label: 'Spares ETA' },
-      { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
-    ])
-
-    if (tab === 'repairs') return renderGenericPage('Repairs / Job Cards', 'Repairs, job cards, parts used and fitters.', 'repairs', [
-      { key: 'fleet_no', label: 'Fleet' },
-      { key: 'job_card_no', label: 'Job Card' },
-      { key: 'fault', label: 'Fault' },
-      { key: 'assigned_to', label: 'Assigned' },
-      { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
-    ])
-
-    if (tab === 'services') return renderGenericPage('Services', 'Past services, job cards, supervisors and service due history.', 'services', [
-      { key: 'fleet_no', label: 'Fleet' },
-      { key: 'service_type', label: 'Service' },
-      { key: 'due_date', label: 'Due Date' },
-      { key: 'supervisor', label: 'Supervisor' },
-      { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
-    ])
+    if (tab === 'breakdowns') return renderGenericPage('Breakdowns', 'Breakdown reports, faults, spares ETA and assigned fitters.', 'breakdowns', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'spare_eta', label: 'Spares ETA' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
+    if (tab === 'repairs') return renderGenericPage('Repairs / Job Cards', 'Repairs, job cards, parts used and fitters.', 'repairs', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
+    if (tab === 'tyres') return renderGenericPage('Tyres', 'Tyre make, serial number, company number, fitment, measurements and ordering.', 'tyres', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'serial_no', label: 'Serial' }, { key: 'make', label: 'Make' }, { key: 'position', label: 'Position' }, { key: 'size', label: 'Size' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
+    if (tab === 'batteries') return renderGenericPage('Batteries', 'Battery make, serial number, date fitted, fleet, charging voltage and maintenance reminders.', 'batteries', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'serial_no', label: 'Serial' }, { key: 'make', label: 'Make' }, { key: 'volts', label: 'Volts' }, { key: 'fitment_date', label: 'Fitted' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
+    if (tab === 'operations') return renderGenericPage('Operations / Operators', 'Operators by machine type, history, score sheets, offences and damages.', 'operations', [{ key: 'operator_name', label: 'Operator' }, { key: 'machine_type', label: 'Machine Type' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'score', label: 'Score' }, { key: 'offence', label: 'Offence' }, { key: 'supervisor', label: 'Supervisor' }])
 
     if (tab === 'spares') {
-      return (
-        <div>
-          <PageTitle title="Spares & Orders" subtitle="Stock, requests, awaiting funding, local/international orders and delivery ETA." right={<ExcelButton table="spares" />} />
-
-          <div className="stats">
-            {orderStages.map((stage) => <StatCard key={stage} title={stage} value={data.spares_orders.filter((r) => String(r.workflow_stage || r.status) === stage).length} detail="Spares orders" />)}
-          </div>
-
-          <div className="grid-2">
-            <section className="card">
-              <h2>Spares Stock</h2>
-              <ExcelButton table="spares" />
-              <MiniTable rows={data.spares} columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }, { key: 'order_status', label: 'Status', render: (r) => <Badge value={r.order_status} /> }]} />
-            </section>
-
-            <section className="card">
-              <h2>Spares Orders</h2>
-              <ExcelButton table="spares_orders" />
-              <MiniTable rows={data.spares_orders} columns={[{ key: 'machine_fleet_no', label: 'Fleet' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
-            </section>
-          </div>
-        </div>
-      )
+      return <div><PageTitle title="Spares & Orders" subtitle="Stock, requests, awaiting funding, local/international orders and delivery ETA." right={<><ExcelButton table="spares" /><PhotoUploadBox linkedType="Spares & Orders" /></>} /><div className="stats">{orderStages.map((stage) => <StatCard key={stage} title={stage} value={data.spares_orders.filter((r) => String(r.workflow_stage || r.status) === stage).length} detail="Spares orders" />)}</div><div className="grid-2"><section className="card"><h2>Spares Stock</h2><ExcelButton table="spares" /><MiniTable rows={data.spares} columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }, { key: 'order_status', label: 'Status', render: (r) => <Badge value={r.order_status} /> }]} /></section><section className="card"><h2>Spares Orders</h2><ExcelButton table="spares_orders" /><MiniTable rows={data.spares_orders} columns={[{ key: 'machine_fleet_no', label: 'Fleet' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div><section className="card"><h2>Spares photos</h2><PhotoGallery linkedType="Spares & Orders" /></section></div>
     }
 
-    if (tab === 'tyres') return renderGenericPage('Tyres', 'Tyre make, serial number, company number, fitment, measurements and ordering.', 'tyres', [
-      { key: 'fleet_no', label: 'Fleet' },
-      { key: 'serial_no', label: 'Serial' },
-      { key: 'make', label: 'Make' },
-      { key: 'position', label: 'Position' },
-      { key: 'size', label: 'Size' },
-      { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
-    ])
+    if (tab === 'hoses') return <div><PageTitle title="Hoses" subtitle="Hose stock, fittings, bulk requests, individual hose repairs and offsite approval." right={<><ExcelButton table="hoses" /><PhotoUploadBox linkedType="Hoses" /></>} /><div className="grid-2"><section className="card"><h2>Hose Stock</h2><ExcelButton table="hoses" /><MiniTable rows={data.hoses} columns={[{ key: 'hose_no', label: 'Hose No' }, { key: 'hose_type', label: 'Type' }, { key: 'size', label: 'Size' }, { key: 'stock_qty', label: 'Stock' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Hose Requests</h2><ExcelButton table="hose_requests" /><MiniTable rows={data.hose_requests} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'hose_type', label: 'Type' }, { key: 'requested_by', label: 'Requested By' }, { key: 'qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div><section className="card"><h2>Hose photos</h2><PhotoGallery linkedType="Hoses" /></section></div>
 
-    if (tab === 'batteries') return renderGenericPage('Batteries', 'Battery make, serial number, date fitted, fleet, charging voltage and maintenance reminders.', 'batteries', [
-      { key: 'fleet_no', label: 'Fleet' },
-      { key: 'serial_no', label: 'Serial' },
-      { key: 'make', label: 'Make' },
-      { key: 'volts', label: 'Volts' },
-      { key: 'fitment_date', label: 'Fitted' },
-      { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
-    ])
+    if (tab === 'tools') return <div><PageTitle title="Tools" subtitle="Inventory, orders and employee issued tools." right={<><ExcelButton table="tools" /><PhotoUploadBox linkedType="Tools" /></>} /><div className="grid-2"><section className="card"><h2>Tools Inventory</h2><ExcelButton table="tools" /><MiniTable rows={data.tools} columns={[{ key: 'tool_name', label: 'Tool' }, { key: 'brand', label: 'Brand' }, { key: 'serial_no', label: 'Serial' }, { key: 'stock_qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Employee Issued Tools</h2><ExcelButton table="employee_tools" /><MiniTable rows={data.employee_tools} columns={[{ key: 'employee_name', label: 'Employee' }, { key: 'tool_name', label: 'Tool' }, { key: 'issue_date', label: 'Issued' }, { key: 'issued_by', label: 'Issued By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div><section className="card"><h2>Tool photos</h2><PhotoGallery linkedType="Tools" /></section></div>
 
-    if (tab === 'operations') return renderGenericPage('Operations / Operators', 'Operators by machine type, history, score sheets, offences and damages.', 'operations', [
-      { key: 'operator_name', label: 'Operator' },
-      { key: 'machine_type', label: 'Machine Type' },
-      { key: 'fleet_no', label: 'Fleet' },
-      { key: 'score', label: 'Score' },
-      { key: 'offence', label: 'Offence' },
-      { key: 'supervisor', label: 'Supervisor' }
-    ])
+    if (tab === 'fabrication') return <div><PageTitle title="Boiler Shop / Panel Beaters" subtitle="Stock, material requests, projects and material booked to machines." right={<><ExcelButton table="fabrication_stock" /><PhotoUploadBox linkedType="Boiler/Panel" /></>} /><div className="grid-2"><section className="card"><h2>Material Stock</h2><ExcelButton table="fabrication_stock" /><MiniTable rows={data.fabrication_stock} columns={[{ key: 'department', label: 'Department' }, { key: 'material_type', label: 'Material' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Major Projects</h2><ExcelButton table="fabrication_projects" /><MiniTable rows={data.fabrication_projects} columns={[{ key: 'project_name', label: 'Project' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'supervisor', label: 'Supervisor' }, { key: 'progress_percent', label: 'Progress %' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div><section className="card"><h2>Boiler/Panel photos</h2><PhotoGallery linkedType="Boiler/Panel" /></section></div>
 
-    if (tab === 'hoses') {
-      return (
-        <div>
-          <PageTitle title="Hoses" subtitle="Hose stock, fittings, bulk requests, individual hose repairs and offsite approval." right={<ExcelButton table="hoses" />} />
-
-          <div className="grid-2">
-            <section className="card">
-              <h2>Hose Stock</h2>
-              <ExcelButton table="hoses" />
-              <MiniTable rows={data.hoses} columns={[{ key: 'hose_no', label: 'Hose No' }, { key: 'hose_type', label: 'Type' }, { key: 'size', label: 'Size' }, { key: 'stock_qty', label: 'Stock' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
-            </section>
-
-            <section className="card">
-              <h2>Hose Requests</h2>
-              <ExcelButton table="hose_requests" />
-              <MiniTable rows={data.hose_requests} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'hose_type', label: 'Type' }, { key: 'requested_by', label: 'Requested By' }, { key: 'qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
-            </section>
-          </div>
-        </div>
-      )
-    }
-
-    if (tab === 'tools') {
-      return (
-        <div>
-          <PageTitle title="Tools" subtitle="Inventory, orders and employee issued tools." right={<ExcelButton table="tools" />} />
-
-          <div className="grid-2">
-            <section className="card">
-              <h2>Tools Inventory</h2>
-              <ExcelButton table="tools" />
-              <MiniTable rows={data.tools} columns={[{ key: 'tool_name', label: 'Tool' }, { key: 'brand', label: 'Brand' }, { key: 'serial_no', label: 'Serial' }, { key: 'stock_qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
-            </section>
-
-            <section className="card">
-              <h2>Employee Issued Tools</h2>
-              <ExcelButton table="employee_tools" />
-              <MiniTable rows={data.employee_tools} columns={[{ key: 'employee_name', label: 'Employee' }, { key: 'tool_name', label: 'Tool' }, { key: 'issue_date', label: 'Issued' }, { key: 'issued_by', label: 'Issued By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
-            </section>
-          </div>
-        </div>
-      )
-    }
-
-    if (tab === 'fabrication') {
-      return (
-        <div>
-          <PageTitle title="Boiler Shop / Panel Beaters" subtitle="Stock, material requests, projects and material booked to machines." right={<ExcelButton table="fabrication_stock" />} />
-
-          <div className="grid-2">
-            <section className="card">
-              <h2>Material Stock</h2>
-              <ExcelButton table="fabrication_stock" />
-              <MiniTable rows={data.fabrication_stock} columns={[{ key: 'department', label: 'Department' }, { key: 'material_type', label: 'Material' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
-            </section>
-
-            <section className="card">
-              <h2>Major Projects</h2>
-              <ExcelButton table="fabrication_projects" />
-              <MiniTable rows={data.fabrication_projects} columns={[{ key: 'project_name', label: 'Project' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'supervisor', label: 'Supervisor' }, { key: 'progress_percent', label: 'Progress %' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
-            </section>
-          </div>
-        </div>
-      )
-    }
-
-    if (tab === 'photos') return renderGenericPage('Photos', 'Photo captions, machine damage, abuse and inspection references.', 'photo_logs', [
-      { key: 'fleet_no', label: 'Fleet' },
-      { key: 'linked_type', label: 'Type' },
-      { key: 'caption', label: 'Caption' },
-      { key: 'notes', label: 'Notes' }
-    ])
-
-    if (tab === 'admin') {
-      return (
-        <div>
-          <PageTitle title="Admin" subtitle="Sync, local storage and system controls." />
-
-          <section className="card">
-            <div className="button-row">
-              <button className="primary" onClick={loadAll}>Sync from Supabase</button>
-              <button onClick={() => window.print()}>Print</button>
-              <button onClick={() => {
-                localStorage.removeItem(SNAPSHOT_KEY)
-                setData(emptyData)
-                setMessage('Local snapshot cleared.')
-              }}>Clear local snapshot</button>
-            </div>
-
-            <div className="meta-grid">
-              <div><span>Connection</span><b>{online ? 'Online' : 'Offline'}</b></div>
-              <div><span>Supabase</span><b>{isSupabaseConfigured ? 'Configured' : 'Not configured'}</b></div>
-              <div><span>User</span><b>{session?.username}</b></div>
-              <div><span>Role</span><b>{session?.role}</b></div>
-            </div>
-          </section>
-        </div>
-      )
-    }
+    if (tab === 'admin') return <div><PageTitle title="Admin" subtitle="Sync, local storage and system controls." /><section className="card"><div className="button-row"><button className="primary" onClick={loadAll}>Sync from Supabase</button><button onClick={() => window.print()}>Print</button><button onClick={() => { localStorage.removeItem(SNAPSHOT_KEY); setData(emptyData); setMessage('Local snapshot cleared.') }}>Clear local snapshot</button></div><div className="meta-grid"><div><span>Connection</span><b>{online ? 'Online' : 'Offline'}</b></div><div><span>Supabase</span><b>{isSupabaseConfigured ? 'Configured' : 'Not configured'}</b></div><div><span>User</span><b>{session?.username}</b></div><div><span>Role</span><b>{session?.role}</b></div></div></section></div>
 
     return renderDashboard()
   }
@@ -1862,561 +1385,88 @@ export default function Home() {
   return (
     <main className="app-shell">
       <style>{baseStyles}</style>
-
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="logo-box">TE</div>
-          <div>
-            <b>Turbo Energy</b>
-            <small>Workshop Control</small>
-          </div>
-        </div>
-
-        <nav>
-          {nav.map(([key, label]) => (
-            <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>
-              {label}
-            </button>
-          ))}
-        </nav>
-      </aside>
-
-      <section className="main-area">
-        <header className="topbar">
-          <div>
-            <h1>{nav.find(([key]) => key === tab)?.[1] || 'Dashboard'}</h1>
-            <p>Navy/orange workshop system • laptop and phone friendly • online/offline records</p>
-          </div>
-
-          <div className="top-actions">
-            <Badge value={online ? 'Online' : 'Offline'} />
-            <span>{session.username} ({session.role})</span>
-            <button onClick={loadAll}>Sync</button>
-            <button onClick={logout}>Logout</button>
-          </div>
-        </header>
-
-        {message && <div className="message">{message}</div>}
-
-        {renderContent()}
-      </section>
+      <aside className="sidebar"><div className="brand"><div className="logo-box">TE</div><div><b>Turbo Energy</b><small>Workshop Control</small></div></div><nav>{nav.map(([key, label]) => <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>{label}</button>)}</nav></aside>
+      <section className="main-area"><header className="topbar"><div><h1>{nav.find(([key]) => key === tab)?.[1] || 'Dashboard'}</h1><p>Navy/orange workshop system • laptop and phone friendly • online/offline records</p></div><div className="top-actions"><Badge value={online ? 'Online' : 'Offline'} /><span>{session.username} ({session.role})</span><button onClick={loadAll}>Sync</button><button onClick={logout}>Logout</button></div></header>{message && <div className="message">{message}</div>}{renderContent()}</section>
     </main>
   )
 }
 
 const baseStyles = `
-  :root {
-    --navy: #061a33;
-    --navy2: #0b2b52;
-    --orange: #ff7a1a;
-    --blue: #9fe6ff;
-    --line: rgba(159,230,255,.22);
-    --card: rgba(8,29,55,.92);
-    --text: #f5f9ff;
-    --muted: #a9bad1;
-    --danger: #ff8f8f;
-    --good: #86efac;
-    --warn: #ffd28a;
-  }
-
+  :root { --navy: #061a33; --navy2: #0b2b52; --orange: #ff7a1a; --blue: #9fe6ff; --line: rgba(159,230,255,.22); --card: rgba(8,29,55,.92); --text: #f5f9ff; --muted: #a9bad1; --danger: #ff8f8f; --good: #86efac; --warn: #ffd28a; }
   * { box-sizing: border-box; }
-
-  body {
-    margin: 0;
-    background:
-      radial-gradient(circle at top left, rgba(255,122,26,.20), transparent 30%),
-      linear-gradient(135deg, #020814 0%, #061a33 48%, #0b2b52 100%);
-    color: var(--text);
-    font-family: Arial, Helvetica, sans-serif;
-  }
-
+  body { margin: 0; background: radial-gradient(circle at top left, rgba(255,122,26,.20), transparent 30%), linear-gradient(135deg, #020814 0%, #061a33 48%, #0b2b52 100%); color: var(--text); font-family: Arial, Helvetica, sans-serif; }
   button, input, select, textarea { font: inherit; }
-
-  button {
-    border: 1px solid var(--line);
-    background: rgba(255,255,255,.07);
-    color: var(--text);
-    border-radius: 14px;
-    padding: 10px 14px;
-    cursor: pointer;
-    font-weight: 800;
-  }
-
+  button { border: 1px solid var(--line); background: rgba(255,255,255,.07); color: var(--text); border-radius: 14px; padding: 10px 14px; cursor: pointer; font-weight: 800; }
   button:hover { border-color: var(--blue); }
-
-  .primary {
-    background: linear-gradient(135deg, var(--orange), #ffae4d);
-    color: #071a33;
-    border: 0;
-    font-weight: 900;
-  }
-
+  .primary { background: linear-gradient(135deg, var(--orange), #ffae4d); color: #071a33; border: 0; font-weight: 900; }
   .full { width: 100%; }
-
-  .login-shell {
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding: 24px;
-  }
-
-  .login-card {
-    width: min(460px, 100%);
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 28px;
-    padding: 28px;
-    box-shadow: 0 24px 80px rgba(0,0,0,.45);
-  }
-
-  .app-shell {
-    min-height: 100vh;
-    display: grid;
-    grid-template-columns: 260px 1fr;
-  }
-
-  .sidebar {
-    border-right: 1px solid var(--line);
-    background: rgba(3,15,30,.92);
-    padding: 18px 14px;
-    position: sticky;
-    top: 0;
-    height: 100vh;
-    overflow: auto;
-  }
-
-  .brand {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 22px;
-  }
-
-  .brand small {
-    display: block;
-    color: var(--muted);
-  }
-
-  .logo-box {
-    width: 52px;
-    height: 52px;
-    border-radius: 14px;
-    background: #ffffff;
-    color: var(--navy);
-    display: grid;
-    place-items: center;
-    font-weight: 900;
-    font-size: 22px;
-    box-shadow: 0 10px 30px rgba(0,0,0,.28);
-  }
-
-  nav {
-    display: grid;
-    gap: 8px;
-  }
-
-  nav button {
-    text-align: left;
-    border-radius: 14px;
-  }
-
-  nav button.active,
-  .active-small {
-    background: rgba(255,122,26,.18);
-    border-color: var(--orange);
-    box-shadow: inset 4px 0 0 var(--orange);
-  }
-
-  .main-area {
-    padding: 24px;
-    overflow: auto;
-  }
-
-  .topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 18px;
-    background: linear-gradient(135deg, var(--navy), var(--navy2));
-    border: 1px solid var(--line);
-    border-radius: 24px;
-    padding: 22px;
-    margin-bottom: 22px;
-    box-shadow: 0 18px 55px rgba(0,0,0,.35);
-  }
-
-  .topbar h1,
-  .page-title h1 {
-    margin: 0;
-    font-size: 28px;
-  }
-
-  .topbar p,
-  .page-title p,
-  p {
-    color: var(--muted);
-    margin: 6px 0 0;
-    line-height: 1.4;
-  }
-
-  .top-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .page-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 16px;
-    margin: 16px 0;
-  }
-
-  .page-actions {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .stats {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(180px, 1fr));
-    gap: 14px;
-    margin-bottom: 18px;
-  }
-
-  .stat-card {
-    text-align: left;
-    min-height: 130px;
-    border-radius: 20px;
-    padding: 18px;
-    background: linear-gradient(135deg, rgba(16,68,112,.95), rgba(11,43,82,.95));
-    position: relative;
-    overflow: hidden;
-  }
-
-  .stat-card.selected-stat {
-    border-color: var(--orange);
-    box-shadow: 0 0 0 2px rgba(255,122,26,.28), 0 14px 45px rgba(0,0,0,.28);
-  }
-
-  .stat-card::after {
-    content: '';
-    position: absolute;
-    width: 90px;
-    height: 90px;
-    right: -18px;
-    bottom: -18px;
-    border-radius: 30px;
-    background: rgba(255,255,255,.08);
-  }
-
-  .stat-card span {
-    color: #b9d8ff;
-    font-size: 13px;
-    letter-spacing: .08em;
-    text-transform: uppercase;
-    font-weight: 900;
-  }
-
-  .stat-card b {
-    display: block;
-    font-size: 38px;
-    margin-top: 10px;
-  }
-
+  .login-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; }
+  .login-card { width: min(460px, 100%); background: var(--card); border: 1px solid var(--line); border-radius: 28px; padding: 28px; box-shadow: 0 24px 80px rgba(0,0,0,.45); }
+  .app-shell { min-height: 100vh; display: grid; grid-template-columns: 260px 1fr; }
+  .sidebar { border-right: 1px solid var(--line); background: rgba(3,15,30,.92); padding: 18px 14px; position: sticky; top: 0; height: 100vh; overflow: auto; }
+  .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; }
+  .brand small { display: block; color: var(--muted); }
+  .logo-box { width: 52px; height: 52px; border-radius: 14px; background: #ffffff; color: var(--navy); display: grid; place-items: center; font-weight: 900; font-size: 22px; box-shadow: 0 10px 30px rgba(0,0,0,.28); }
+  nav { display: grid; gap: 8px; }
+  nav button { text-align: left; border-radius: 14px; }
+  nav button.active, .active-small { background: rgba(255,122,26,.18); border-color: var(--orange); box-shadow: inset 4px 0 0 var(--orange); }
+  .main-area { padding: 24px; overflow: auto; }
+  .topbar { display: flex; align-items: center; justify-content: space-between; gap: 18px; background: linear-gradient(135deg, var(--navy), var(--navy2)); border: 1px solid var(--line); border-radius: 24px; padding: 22px; margin-bottom: 22px; box-shadow: 0 18px 55px rgba(0,0,0,.35); }
+  .topbar h1, .page-title h1 { margin: 0; font-size: 28px; }
+  .topbar p, .page-title p, p { color: var(--muted); margin: 6px 0 0; line-height: 1.4; }
+  .top-actions, .page-actions, .badge-row, .chip-row, .button-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .page-title { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin: 16px 0; }
+  .stats { display: grid; grid-template-columns: repeat(4, minmax(180px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .stat-card { text-align: left; min-height: 130px; border-radius: 20px; padding: 18px; background: linear-gradient(135deg, rgba(16,68,112,.95), rgba(11,43,82,.95)); position: relative; overflow: hidden; }
+  .stat-card.selected-stat { border-color: var(--orange); box-shadow: 0 0 0 2px rgba(255,122,26,.28), 0 14px 45px rgba(0,0,0,.28); }
+  .stat-card::after { content: ''; position: absolute; width: 90px; height: 90px; right: -18px; bottom: -18px; border-radius: 30px; background: rgba(255,255,255,.08); }
+  .stat-card span { color: #b9d8ff; font-size: 13px; letter-spacing: .08em; text-transform: uppercase; font-weight: 900; }
+  .stat-card b { display: block; font-size: 38px; margin-top: 10px; }
   .stat-card small { color: #d7eaff; }
-
   .stat-card.purple { background: linear-gradient(135deg, rgba(77,45,91,.95), rgba(32,42,82,.95)); }
   .stat-card.brown { background: linear-gradient(135deg, rgba(86,55,38,.95), rgba(34,45,60,.95)); }
   .stat-card.indigo { background: linear-gradient(135deg, rgba(38,51,111,.95), rgba(23,40,85,.95)); }
   .stat-card.steel { background: linear-gradient(135deg, rgba(45,67,72,.95), rgba(31,53,66,.95)); }
   .stat-card.green { background: linear-gradient(135deg, rgba(14,83,77,.95), rgba(12,56,71,.95)); }
-
-  .grid-2 {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 18px;
-    margin-top: 18px;
-  }
-
-  .import-layout {
-    display: grid;
-    grid-template-columns: 330px 1fr;
-    gap: 18px;
-    align-items: start;
-  }
-
-  .card {
-    background: var(--card);
-    border: 1px solid var(--line);
-    border-radius: 22px;
-    padding: 18px;
-    box-shadow: 0 14px 45px rgba(0,0,0,.28);
-    margin-bottom: 18px;
-  }
-
+  .grid-2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px; margin-top: 18px; }
+  .import-layout { display: grid; grid-template-columns: 330px 1fr; gap: 18px; align-items: start; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 18px; box-shadow: 0 14px 45px rgba(0,0,0,.28); margin-bottom: 18px; }
   .card h2 { margin: 0 0 12px; }
-
-  .form-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-    margin-bottom: 14px;
-  }
-
-  .field {
-    display: grid;
-    gap: 6px;
-  }
-
-  .field span,
-  .upload-stack span {
-    color: #aee7ff;
-    text-transform: uppercase;
-    font-size: 12px;
-    letter-spacing: .06em;
-    font-weight: 900;
-  }
-
-  input,
-  select,
-  textarea {
-    width: 100%;
-    border: 1px solid var(--line);
-    background: rgba(0,0,0,.28);
-    color: var(--text);
-    border-radius: 13px;
-    padding: 12px;
-    outline: none;
-  }
-
-  input:focus,
-  select:focus,
-  textarea:focus {
-    border-color: var(--blue);
-  }
-
-  .upload-box,
-  .upload-stack {
-    border: 1px dashed rgba(159,230,255,.45);
-    border-radius: 18px;
-    padding: 16px;
-    background: rgba(255,255,255,.06);
-    display: grid;
-    gap: 12px;
-  }
-
-  .excel-button {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    background: linear-gradient(135deg, var(--orange), #ffae4d);
-    color: #071a33;
-    border-radius: 14px;
-    padding: 11px 14px;
-    font-weight: 900;
-    cursor: pointer;
-  }
-
-  .excel-button input {
-    display: none;
-  }
-
-  .message {
-    background: rgba(159,230,255,.12);
-    border: 1px solid var(--line);
-    border-radius: 16px;
-    padding: 13px 14px;
-    margin-bottom: 16px;
-    font-weight: 900;
-  }
-
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    border-radius: 999px;
-    padding: 7px 11px;
-    font-size: 12px;
-    font-weight: 900;
-    border: 1px solid var(--line);
-  }
-
-  .badge.good {
-    background: rgba(34,197,94,.18);
-    color: var(--good);
-    border-color: rgba(34,197,94,.35);
-  }
-
-  .badge.danger {
-    background: rgba(239,68,68,.18);
-    color: var(--danger);
-    border-color: rgba(239,68,68,.35);
-  }
-
-  .badge.warn {
-    background: rgba(255,122,26,.18);
-    color: var(--warn);
-    border-color: rgba(255,122,26,.35);
-  }
-
-  .badge.neutral {
-    background: rgba(159,230,255,.12);
-    color: var(--blue);
-  }
-
-  .badge-row,
-  .chip-row,
-  .button-row {
-    display: flex;
-    gap: 10px;
-    flex-wrap: wrap;
-  }
-
-  .chip {
-    background: rgba(159,230,255,.15);
-    color: var(--blue);
-    border: 1px solid var(--line);
-    border-radius: 999px;
-    padding: 8px 10px;
-    font-weight: 900;
-    font-size: 12px;
-  }
-
-  .meta-grid {
-    display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-    gap: 12px;
-    margin-top: 14px;
-  }
-
-  .meta-grid div {
-    border: 1px solid var(--line);
-    background: rgba(255,255,255,.06);
-    border-radius: 16px;
-    padding: 13px;
-  }
-
-  .meta-grid span {
-    display: block;
-    color: var(--muted);
-    text-transform: uppercase;
-    font-size: 11px;
-    letter-spacing: .08em;
-    font-weight: 900;
-  }
-
-  .meta-grid b {
-    display: block;
-    margin-top: 5px;
-    word-break: break-word;
-  }
-
-  .table-wrap {
-    overflow: auto;
-    border: 1px solid var(--line);
-    border-radius: 16px;
-  }
-
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    min-width: 760px;
-  }
-
-  th,
-  td {
-    padding: 11px 12px;
-    border-bottom: 1px solid rgba(159,230,255,.12);
-    text-align: left;
-    font-size: 13px;
-    vertical-align: top;
-  }
-
-  th {
-    color: var(--blue);
-    background: rgba(0,0,0,.24);
-    text-transform: uppercase;
-    letter-spacing: .06em;
-  }
-
-  .click-row {
-    cursor: pointer;
-  }
-
-  .click-row:hover {
-    background: rgba(255,122,26,.10);
-  }
-
-  .active-row {
-    background: rgba(255,122,26,.18);
-    outline: 1px solid rgba(255,122,26,.45);
-  }
-
-  .empty {
-    padding: 18px;
-    border: 1px dashed var(--line);
-    border-radius: 16px;
-    color: var(--muted);
-  }
-
-  .import-list {
-    display: grid;
-    gap: 9px;
-    max-height: 70vh;
-    overflow: auto;
-    padding-right: 5px;
-  }
-
-  .import-btn {
-    text-align: left;
-    display: grid;
-    gap: 4px;
-  }
-
-  .import-btn.active {
-    border-color: var(--orange);
-    box-shadow: inset 4px 0 0 var(--orange);
-    background: rgba(255,122,26,.16);
-  }
-
-  .import-btn small {
-    color: var(--muted);
-  }
-
-  @media (max-width: 1000px) {
-    .app-shell {
-      grid-template-columns: 1fr;
-    }
-
-    .sidebar {
-      position: relative;
-      height: auto;
-    }
-
-    nav {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-    }
-
-    .topbar,
-    .page-title {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-
-    .stats,
-    .grid-2,
-    .form-grid,
-    .import-layout,
-    .meta-grid {
-      grid-template-columns: 1fr;
-    }
-
-    .main-area {
-      padding: 12px;
-    }
-  }
+  .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .field { display: grid; gap: 6px; }
+  .field span, .upload-stack span, .photo-upload-mini span { color: #aee7ff; text-transform: uppercase; font-size: 12px; letter-spacing: .06em; font-weight: 900; }
+  input, select, textarea { width: 100%; border: 1px solid var(--line); background: rgba(0,0,0,.28); color: var(--text); border-radius: 13px; padding: 12px; outline: none; }
+  input:focus, select:focus, textarea:focus { border-color: var(--blue); }
+  .upload-box, .upload-stack, .photo-upload-mini { border: 1px dashed rgba(159,230,255,.45); border-radius: 18px; padding: 16px; background: rgba(255,255,255,.06); display: grid; gap: 12px; margin-top: 12px; }
+  .excel-button { display: inline-flex; align-items: center; gap: 8px; background: linear-gradient(135deg, var(--orange), #ffae4d); color: #071a33; border-radius: 14px; padding: 11px 14px; font-weight: 900; cursor: pointer; }
+  .excel-button input { display: none; }
+  .message { background: rgba(159,230,255,.12); border: 1px solid var(--line); border-radius: 16px; padding: 13px 14px; margin-bottom: 16px; font-weight: 900; }
+  .badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 7px 11px; font-size: 12px; font-weight: 900; border: 1px solid var(--line); }
+  .badge.good { background: rgba(34,197,94,.18); color: var(--good); border-color: rgba(34,197,94,.35); }
+  .badge.danger { background: rgba(239,68,68,.18); color: var(--danger); border-color: rgba(239,68,68,.35); }
+  .badge.warn { background: rgba(255,122,26,.18); color: var(--warn); border-color: rgba(255,122,26,.35); }
+  .badge.neutral { background: rgba(159,230,255,.12); color: var(--blue); }
+  .chip { background: rgba(159,230,255,.15); color: var(--blue); border: 1px solid var(--line); border-radius: 999px; padding: 8px 10px; font-weight: 900; font-size: 12px; }
+  .meta-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
+  .meta-grid div { border: 1px solid var(--line); background: rgba(255,255,255,.06); border-radius: 16px; padding: 13px; }
+  .meta-grid span { display: block; color: var(--muted); text-transform: uppercase; font-size: 11px; letter-spacing: .08em; font-weight: 900; }
+  .meta-grid b { display: block; margin-top: 5px; word-break: break-word; }
+  .table-wrap { overflow: auto; border: 1px solid var(--line); border-radius: 16px; }
+  table { width: 100%; border-collapse: collapse; min-width: 760px; }
+  th, td { padding: 11px 12px; border-bottom: 1px solid rgba(159,230,255,.12); text-align: left; font-size: 13px; vertical-align: top; }
+  th { color: var(--blue); background: rgba(0,0,0,.24); text-transform: uppercase; letter-spacing: .06em; }
+  .click-row { cursor: pointer; }
+  .click-row:hover { background: rgba(255,122,26,.10); }
+  .active-row { background: rgba(255,122,26,.18); outline: 1px solid rgba(255,122,26,.45); }
+  .empty { padding: 18px; border: 1px dashed var(--line); border-radius: 16px; color: var(--muted); }
+  .import-list { display: grid; gap: 9px; max-height: 70vh; overflow: auto; padding-right: 5px; }
+  .import-btn { text-align: left; display: grid; gap: 4px; }
+  .import-btn.active { border-color: var(--orange); box-shadow: inset 4px 0 0 var(--orange); background: rgba(255,122,26,.16); }
+  .import-btn small { color: var(--muted); }
+  .photo-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+  .photo-card { border: 1px solid var(--line); background: rgba(255,255,255,.06); border-radius: 16px; padding: 10px; display: grid; gap: 8px; }
+  .photo-card img, .photo-placeholder { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; background: rgba(0,0,0,.28); display: grid; place-items: center; color: var(--muted); }
+  .photo-card small { color: var(--muted); }
+  @media (max-width: 1000px) { .app-shell { grid-template-columns: 1fr; } .sidebar { position: relative; height: auto; } nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .topbar, .page-title { align-items: flex-start; flex-direction: column; } .stats, .grid-2, .form-grid, .import-layout, .meta-grid { grid-template-columns: 1fr; } .main-area { padding: 12px; } }
 `
+
