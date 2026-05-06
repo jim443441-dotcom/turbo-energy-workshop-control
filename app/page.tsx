@@ -417,6 +417,100 @@ function inferMachineType(value: any, textValue = '') {
   return 'Machine'
 }
 
+
+const departmentHeaderNames = [
+  'Mining',
+  'Logistics',
+  'Plant',
+  'Workshop',
+  'Engineering & Civils',
+  'Stores & Procurement',
+  'Admin'
+]
+
+function cleanFleetNo(value: any) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toUpperCase()
+}
+
+function isLikelyFleetNo(value: any) {
+  const text = cleanFleetNo(value)
+  if (!text) return false
+  if (departmentHeaderNames.some((dept) => normal(dept) === normal(text))) return false
+  if (['FLEET', 'MACHINE', 'DEPARTMENT', 'TOTAL', 'TYPE', 'STATUS', 'DATE'].includes(text)) return false
+  if (/^\d+$/.test(text)) return false
+  if (/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$/.test(text)) return false
+  return /^[A-Z]{1,6}\s?-?\d{1,6}[A-Z]?$/.test(text)
+}
+
+function departmentAllocationHeaderIndex(allCells: any[][]) {
+  return allCells.findIndex((line) => {
+    const matched = line.filter((cell) => departmentHeaderNames.some((dept) => normal(dept) === normal(cell))).length
+    return matched >= 2
+  })
+}
+
+function parseDepartmentAllocation(allCells: any[][]) {
+  const headerIndex = departmentAllocationHeaderIndex(allCells)
+  if (headerIndex < 0) return []
+
+  const headers = allCells[headerIndex].map((cell) => String(cell || '').trim())
+  const validColumns = headers
+    .map((department, index) => ({ department, index }))
+    .filter((item) => departmentHeaderNames.some((dept) => normal(dept) === normal(item.department)))
+
+  const map = new Map<string, Row>()
+
+  allCells.slice(headerIndex + 1).forEach((line) => {
+    validColumns.forEach(({ department, index }) => {
+      const fleetNo = cleanFleetNo(line[index])
+      if (!isLikelyFleetNo(fleetNo)) return
+
+      const key = normal(fleetNo)
+      if (map.has(key)) return
+
+      map.set(key, cleanRow({
+        id: fleetNo,
+        fleet_no: fleetNo,
+        machine_type: inferMachineType(fleetNo),
+        make_model: '',
+        reg_no: fleetNo.startsWith('A') ? fleetNo : '',
+        department,
+        location: department,
+        hours: 0,
+        mileage: 0,
+        status: 'Available',
+        allocation_source: 'department_allocation',
+        active_fleet_register: true,
+        notes: 'Imported from department allocation Excel sheet'
+      }))
+    })
+  })
+
+  return Array.from(map.values())
+}
+
+
+function activeFleetRows(machines: Row[]) {
+  const allocationRows = machines.filter((machine) => String(machine.allocation_source || '') === 'department_allocation')
+  return allocationRows.length ? allocationRows : machines
+}
+
+function departmentSummaryRows(machines: Row[]) {
+  const map = new Map<string, Row>()
+
+  machines.forEach((machine) => {
+    const department = String(machine.department || 'Unallocated').trim() || 'Unallocated'
+    const existing = map.get(department) || { id: department, department, total: 0, available: 0, breakdown: 0, fleet_list: '' }
+    existing.total += 1
+    if (String(machine.status || '').toLowerCase().includes('available')) existing.available += 1
+    if (String(machine.status || '').toLowerCase().includes('break')) existing.breakdown += 1
+    existing.fleet_list = [existing.fleet_list, machine.fleet_no].filter(Boolean).join(', ')
+    map.set(department, existing)
+  })
+
+  return Array.from(map.values()).sort((a, b) => String(a.department).localeCompare(String(b.department)))
+}
+
 function serviceStatus(hoursTillValue: any, percentDoneValue: any, hasServiceNumbers = true) {
   const hoursTill = Number(hoursTillValue)
   const percentDone = Number(percentDoneValue)
@@ -486,16 +580,20 @@ function parseLeave(row: Row) {
 function parseFleet(row: Row) {
   const cells = Array.isArray(row.__cells) ? row.__cells : Object.values(row)
   const cellText = cells.map((c) => String(c || '')).join(' ')
-  const fleetNo = String(getCell(row, ['Fleet', 'FLEET No', 'Fleet No', 'Fleet Number', 'Machine', 'Machine No', 'Unit', 'Equipment', 'Plant No']) || '').trim() || fleetFromCells(cells)
-  if (!fleetNo) return null
+  const rawFleet = getCell(row, ['Fleet', 'FLEET No', 'Fleet No', 'Fleet Number', 'Machine', 'Machine No', 'Unit', 'Equipment', 'Plant No', 'Asset', 'Registration', 'Reg No'])
+  const fleetNo = cleanFleetNo(rawFleet) || fleetFromCells(cells)
+  if (!fleetNo || !isLikelyFleetNo(fleetNo)) return null
+
+  const department = String(getCell(row, ['Department', 'Dept', 'Section', 'Allocation', 'Allocated Department']) || 'Workshop').trim()
+
   return cleanRow({
     id: fleetNo,
     fleet_no: fleetNo,
     machine_type: String(getCell(row, ['Machine Type', 'Equipment Type', 'Type']) || '').trim() || inferMachineType(fleetNo, cellText),
     make_model: String(getCell(row, ['Make Model', 'Make', 'Model', 'Description', 'DESCRIPTION']) || '').trim(),
-    reg_no: String(getCell(row, ['Reg', 'Registration', 'Reg No']) || '').trim(),
-    department: String(getCell(row, ['Department', 'Dept', 'Section']) || 'Workshop').trim(),
-    location: String(getCell(row, ['Location', 'Site']) || '').trim(),
+    reg_no: String(getCell(row, ['Reg', 'Registration', 'Reg No']) || (fleetNo.startsWith('A') ? fleetNo : '')).trim(),
+    department,
+    location: String(getCell(row, ['Location', 'Site']) || department).trim(),
     hours: num(getCell(row, ['Hours', 'Hrs', 'HM', 'Hour Meter', 'TOTAL HRS TO DATE', 'ODO READING CURRENT close']), 0),
     mileage: num(getCell(row, ['Mileage', 'KM', 'Odometer']), 0),
     status: String(getCell(row, ['Status', 'State']) || 'Available').trim(),
@@ -676,14 +774,16 @@ function parseRows(table: TableName, rawRows: Row[], allCells: any[][]) {
   if (table === 'personnel') rows = rawRows.map(parsePersonnel).filter(Boolean) as Row[]
   else if (table === 'leave_records') rows = rawRows.map(parseLeave).filter(Boolean) as Row[]
   else if (table === 'fleet_machines') {
-    rows = rawRows.map(parseFleet).filter(Boolean) as Row[]
+    const allocationRows = parseDepartmentAllocation(allCells)
+    rows = allocationRows.length ? allocationRows : rawRows.map(parseFleet).filter(Boolean) as Row[]
+
     if (!rows.length) {
       const map = new Map<string, Row>()
       allCells.forEach((line) => {
         const fleetNo = fleetFromCells(line)
         if (!fleetNo) return
         const text = line.map((x) => String(x || '')).join(' ')
-        map.set(fleetNo, { id: fleetNo, fleet_no: fleetNo, machine_type: inferMachineType(fleetNo, text), department: 'Workshop', status: 'Available', notes: text.slice(0, 160) })
+        map.set(fleetNo, { id: fleetNo, fleet_no: fleetNo, machine_type: inferMachineType(fleetNo, text), department: 'Workshop', location: 'Workshop', status: 'Available', notes: text.slice(0, 160) })
       })
       rows = Array.from(map.values())
     }
@@ -871,7 +971,8 @@ export default function Home() {
   }, [importSearch])
 
   const dashboard = useMemo(() => {
-    const totalFleet = data.fleet_machines.length
+    const activeFleet = activeFleetRows(data.fleet_machines)
+    const totalFleet = activeFleet.length
     const breakdowns = data.breakdowns.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
     const repairs = data.repairs.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
     const activeServices = latestServiceRows(data.services)
@@ -882,7 +983,8 @@ export default function Home() {
     const lowSpares = data.spares.filter((row) => num(row.stock_qty) <= num(row.min_qty, 1))
     const hoseRequests = data.hose_requests.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
     const toolOrders = data.tool_orders.filter((row) => !String(row.status || '').toLowerCase().includes('delivered'))
-    return { totalFleet, breakdowns, repairs, servicesDue, serviceDueNow, currentLeave, foremen, lowSpares, hoseRequests, toolOrders }
+    const departmentSummary = departmentSummaryRows(activeFleet)
+    return { totalFleet, breakdowns, repairs, servicesDue, serviceDueNow, currentLeave, foremen, lowSpares, hoseRequests, toolOrders, departmentSummary }
   }, [data])
 
   useEffect(() => {
@@ -1174,6 +1276,22 @@ export default function Home() {
           <StatCard title="Hose Requests" value={dashboard.hoseRequests.length} detail="Pending hoses/fittings" onClick={() => setTab('hoses')} />
           <StatCard title="Tool Orders" value={dashboard.toolOrders.length} detail="Requested tools" tone="brown" onClick={() => setTab('tools')} />
         </div>
+
+        <section className="card">
+          <PageTitle title="Fleet by department" subtitle="Department allocation is read from the uploaded department allocation Excel sheet. Click Fleet Register to see the full machine list." right={<button onClick={() => setTab('fleet')}>Fleet Register</button>} />
+          <MiniTable
+            rows={dashboard.departmentSummary}
+            empty="No department allocation loaded yet. Upload the department allocation Excel under Fleet Register."
+            columns={[
+              { key: 'department', label: 'Department' },
+              { key: 'total', label: 'Machines' },
+              { key: 'available', label: 'Available' },
+              { key: 'breakdown', label: 'Breakdown' },
+              { key: 'fleet_list', label: 'Fleet numbers' }
+            ]}
+          />
+        </section>
+
         <div className="grid-2">
           <section className="card">
             <PageTitle title="Machines on breakdown / under repair" right={<button onClick={() => setTab('breakdowns')}>Open breakdowns</button>} />
@@ -1239,7 +1357,7 @@ export default function Home() {
   function renderFleet() {
     return (
       <div>
-        <PageTitle title="Fleet Register" subtitle="Machines, fleet numbers, machine types, hours, mileage and status." right={<><ExcelButton table="fleet_machines" /><PhotoUploadBox linkedType="Fleet" /></>} />
+        <PageTitle title="Fleet Register" subtitle="Machines, department allocation, fleet numbers, machine types, hours, mileage and status. Upload the department allocation Excel here." right={<><ExcelButton table="fleet_machines" /><PhotoUploadBox linkedType="Fleet" /></>} />
         <section className="card"><h2>Add machine</h2><div className="form-grid">
           <Field label="Fleet number"><Input value={machineForm.fleet_no} onChange={(v) => setMachineForm({ ...machineForm, fleet_no: v })} /></Field>
           <Field label="Machine type"><Input value={machineForm.machine_type} onChange={(v) => setMachineForm({ ...machineForm, machine_type: v })} /></Field>
@@ -1250,7 +1368,15 @@ export default function Home() {
           <Field label="Mileage"><Input type="number" value={machineForm.mileage} onChange={(v) => setMachineForm({ ...machineForm, mileage: v })} /></Field>
           <Field label="Status"><Select value={machineForm.status} onChange={(v) => setMachineForm({ ...machineForm, status: v })} options={statuses} /></Field>
         </div><button className="primary" onClick={() => saveRows('fleet_machines', [{ ...machineForm, id: machineForm.fleet_no || uid() }])}>Save machine</button></section>
-        <section className="card"><MiniTable rows={data.fleet_machines} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'machine_type', label: 'Type' }, { key: 'make_model', label: 'Make / Model' }, { key: 'department', label: 'Department' }, { key: 'hours', label: 'Hours' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section>
+        <section className="card">
+          <PageTitle title="Department breakdown" subtitle="This updates the dashboard fleet allocation cards." />
+          <MiniTable rows={departmentSummaryRows(activeFleetRows(data.fleet_machines))} columns={[{ key: 'department', label: 'Department' }, { key: 'total', label: 'Machines' }, { key: 'available', label: 'Available' }, { key: 'breakdown', label: 'Breakdown' }, { key: 'fleet_list', label: 'Fleet numbers' }]} />
+        </section>
+
+        <section className="card">
+          <PageTitle title="All machines" subtitle="Click a fleet number in Machine History to view service, repair, breakdown, spares, tyres, batteries, hoses and photos." />
+          <MiniTable rows={activeFleetRows(data.fleet_machines)} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'machine_type', label: 'Type' }, { key: 'make_model', label: 'Make / Model' }, { key: 'department', label: 'Department' }, { key: 'hours', label: 'Hours' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} />
+        </section>
         <section className="card"><h2>Fleet photos</h2><PhotoGallery linkedType="Fleet" /></section>
       </div>
     )
@@ -1588,8 +1714,9 @@ export default function Home() {
   }
 
   function renderReports() {
-    const byDepartment = data.fleet_machines.reduce((acc: Row, row) => { const key = row.department || 'Unknown'; acc[key] = (acc[key] || 0) + 1; return acc }, {})
-    const byType = data.fleet_machines.reduce((acc: Row, row) => { const key = row.machine_type || 'Unknown'; acc[key] = (acc[key] || 0) + 1; return acc }, {})
+    const reportFleet = activeFleetRows(data.fleet_machines)
+    const byDepartment = reportFleet.reduce((acc: Row, row) => { const key = row.department || 'Unknown'; acc[key] = (acc[key] || 0) + 1; return acc }, {})
+    const byType = reportFleet.reduce((acc: Row, row) => { const key = row.machine_type || 'Unknown'; acc[key] = (acc[key] || 0) + 1; return acc }, {})
     return (
       <div>
         <PageTitle title="Reports" subtitle="Machine availability, service due status, breakdowns by department, fleet type and workshop pressure points." right={<><button onClick={() => window.print()}>Print</button><PhotoUploadBox linkedType="Reports" /></>} />
