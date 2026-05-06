@@ -152,6 +152,7 @@ const IMPORT_TARGETS: ImportTarget[] = [
 ]
 
 const shiftNames = ['Shift 1', 'Shift 2', 'Shift 3']
+
 const personnelRoles = [
   'Manager',
   'Foreman',
@@ -164,13 +165,37 @@ const personnelRoles = [
   'Panel Beater',
   'Wash Bay Attendant',
   'Driver',
-  'Diesel Mechanic'
+  'Diesel Mechanic',
+  'Workshop Clerk',
+  'Workshop Pit Foreman',
+  'Working Chargehand Light Vehicles',
+  'DPF',
+  'Vacant'
 ]
-const sections = ['Workshop', 'Mechanical', 'Auto Electrical', 'Tyre Bay', 'Boiler Shop', 'Panel Beating', 'Stores', 'Wash Bay', 'Operations']
+
+const sections = ['WORKSHOPS', 'Workshop', 'Mechanical', 'Auto Electrical', 'Tyre Bay', 'Boiler Shop', 'Panel Beating', 'Stores', 'Wash Bay', 'Operations']
+
 const leaveTypes = ['Annual Leave', 'Sick Leave', 'Off Duty', 'Training', 'Unpaid Leave', 'AWOL']
-const statuses = ['Available', 'Open', 'In progress', 'Requested', 'Awaiting Funding', 'Funded', 'Awaiting Delivery', 'Delivered', 'Completed', 'Approved', 'Active', 'Inactive']
+
+const statuses = [
+  'Available',
+  'Open',
+  'In progress',
+  'Requested',
+  'Awaiting Funding',
+  'Funded',
+  'Awaiting Delivery',
+  'Delivered',
+  'Completed',
+  'Approved',
+  'Active',
+  'Inactive',
+  'Vacant',
+  'On Leave',
+  'Off Duty'
+]
+
 const orderStages = ['Requested', 'Awaiting Funding', 'Funded', 'Awaiting Delivery', 'Delivered', 'Cancelled']
-const priorities = ['Low', 'Normal', 'High', 'Critical']
 
 const SNAPSHOT_KEY = 'turbo-workshop-snapshot'
 const QUEUE_KEY = 'turbo-workshop-offline-queue'
@@ -178,6 +203,7 @@ const QUEUE_KEY = 'turbo-workshop-offline-queue'
 const today = () => new Date().toISOString().slice(0, 10)
 const nowIso = () => new Date().toISOString()
 const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+
 const num = (value: any, fallback = 0) => {
   const parsed = Number(String(value ?? '').replace(/,/g, '').trim())
   return Number.isFinite(parsed) ? parsed : fallback
@@ -267,18 +293,21 @@ function isCurrentLeave(row: Row) {
   const t = new Date(today()).getTime()
   const s = new Date(start).getTime()
   const e = new Date(end).getTime()
+
   return !Number.isNaN(s) && !Number.isNaN(e) && t >= s && t <= e
 }
 
 function isUpcomingLeave(row: Row) {
   const start = new Date(row.start_date).getTime()
   const t = new Date(today()).getTime()
+
   return !Number.isNaN(start) && start > t
 }
 
 function isPastLeave(row: Row) {
   const end = new Date(row.end_date).getTime()
   const t = new Date(today()).getTime()
+
   return !Number.isNaN(end) && end < t
 }
 
@@ -292,6 +321,7 @@ function getCell(row: Row, aliases: string[]) {
 
   for (const alias of aliases) {
     const wanted = normal(alias)
+
     const found = keys.find((key) => {
       const actual = normal(key)
       return actual && wanted && (actual.includes(wanted) || wanted.includes(actual))
@@ -449,6 +479,7 @@ function parsePersonnel(row: Row) {
   const employeeNo = String(getCell(row, ['Code', 'Employee Code', 'Employee No', 'Clock No', 'Emp No']) || '').trim()
   const role = String(getCell(row, ['Occupation', 'CURRENT JOB TITLE', 'Current Job Title', 'Job Title', 'Trade', 'Role']) || 'Workshop Employee').trim()
   const section = String(getCell(row, ['Department', 'Dept', 'Section']) || 'Workshop').trim()
+  const status = String(getCell(row, ['Status', 'Employment Status']) || 'Active').trim()
 
   if (!name) return null
   if (normal(name).includes('workshopdepartment')) return null
@@ -463,7 +494,7 @@ function parsePersonnel(row: Row) {
     role,
     staff_group: 'Workshop Staff',
     phone: String(getCell(row, ['Phone', 'Cell', 'Mobile']) || '').trim(),
-    employment_status: String(getCell(row, ['Status', 'Employment Status']) || 'Active').trim(),
+    employment_status: status,
     leave_balance_days: num(getCell(row, ['Leave Balance', 'Leave Days']), 30),
     leave_taken_days: num(getCell(row, ['Leave Taken', 'Days Taken']), 0),
     notes: String(getCell(row, ['Notes', 'Remarks']) || '').trim()
@@ -774,12 +805,12 @@ function mergeRows(existing: Row[], incoming: Row[]) {
   const map = new Map<string, Row>()
 
   existing.forEach((row) => {
-    const key = String(row.id || row.fleet_no || row.employee_no || JSON.stringify(row))
+    const key = String(row.id || row.fleet_no || row.employee_no || row.name || JSON.stringify(row))
     map.set(key, row)
   })
 
   incoming.forEach((row) => {
-    const key = String(row.id || row.fleet_no || row.employee_no || JSON.stringify(row))
+    const key = String(row.id || row.fleet_no || row.employee_no || row.name || JSON.stringify(row))
     map.set(key, { ...map.get(key), ...row })
   })
 
@@ -790,7 +821,7 @@ function statusClass(value: any) {
   const text = String(value || '').toLowerCase()
 
   if (text.includes('open') || text.includes('break') || text.includes('awaiting') || text.includes('low') || text.includes('due') || text.includes('critical')) return 'danger'
-  if (text.includes('request') || text.includes('fund') || text.includes('progress') || text.includes('normal')) return 'warn'
+  if (text.includes('request') || text.includes('fund') || text.includes('progress') || text.includes('normal') || text.includes('vacant')) return 'warn'
   if (text.includes('active') || text.includes('available') || text.includes('complete') || text.includes('delivered') || text.includes('approved') || text.includes('stock')) return 'good'
 
   return 'neutral'
@@ -821,9 +852,9 @@ function Select({ value, onChange, options }: { value: any; onChange: (value: an
   )
 }
 
-function StatCard({ title, value, detail, tone = 'blue', onClick }: { title: string; value: any; detail?: string; tone?: string; onClick?: () => void }) {
+function StatCard({ title, value, detail, tone = 'blue', onClick, active = false }: { title: string; value: any; detail?: string; tone?: string; onClick?: () => void; active?: boolean }) {
   return (
-    <button type="button" className={`stat-card ${tone}`} onClick={onClick}>
+    <button type="button" className={`stat-card ${tone} ${active ? 'selected-stat' : ''}`} onClick={onClick}>
       <span>{title}</span>
       <b>{value}</b>
       {detail && <small>{detail}</small>}
@@ -831,7 +862,19 @@ function StatCard({ title, value, detail, tone = 'blue', onClick }: { title: str
   )
 }
 
-function MiniTable({ rows, columns, empty = 'No records yet.' }: { rows: Row[]; columns: { key: string; label: string; render?: (row: Row) => any }[]; empty?: string }) {
+function MiniTable({
+  rows,
+  columns,
+  empty = 'No records yet.',
+  onRowClick,
+  activeId
+}: {
+  rows: Row[]
+  columns: { key: string; label: string; render?: (row: Row) => any }[]
+  empty?: string
+  onRowClick?: (row: Row) => void
+  activeId?: string
+}) {
   if (!rows.length) return <div className="empty">{empty}</div>
 
   return (
@@ -844,7 +887,11 @@ function MiniTable({ rows, columns, empty = 'No records yet.' }: { rows: Row[]; 
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.id || JSON.stringify(row)}>
+            <tr
+              key={row.id || JSON.stringify(row)}
+              className={`${onRowClick ? 'click-row' : ''} ${activeId && String(row.id) === activeId ? 'active-row' : ''}`}
+              onClick={() => onRowClick?.(row)}
+            >
               {columns.map((col) => <td key={col.key}>{col.render ? col.render(row) : String(row[col.key] ?? '')}</td>)}
             </tr>
           ))}
@@ -874,6 +921,7 @@ export default function Home() {
   const [data, setData] = useState<AppData>(emptyData)
   const [message, setMessage] = useState('')
   const [online, setOnline] = useState(true)
+
   const [selectedImport, setSelectedImport] = useState<TableName>('personnel')
   const [importSearch, setImportSearch] = useState('')
   const [importStatus, setImportStatus] = useState('Ready')
@@ -883,8 +931,11 @@ export default function Home() {
   const [busyImport, setBusyImport] = useState(false)
 
   const [machineForm, setMachineForm] = useState<Row>({ fleet_no: '', machine_type: '', make_model: '', department: 'Workshop', location: '', hours: 0, mileage: 0, status: 'Available' })
-  const [personForm, setPersonForm] = useState<Row>({ employee_no: '', name: '', shift: 'Shift 1', section: 'Workshop', role: 'Diesel Plant Fitter', employment_status: 'Active', leave_balance_days: 30, leave_taken_days: 0 })
-  const [leaveForm, setLeaveForm] = useState<Row>({ employee_no: '', person_name: '', leave_type: 'Annual Leave', start_date: today(), end_date: today(), status: 'Approved' })
+  const [personForm, setPersonForm] = useState<Row>({ id: '', employee_no: '', name: '', shift: 'Shift 1', section: 'Workshop', role: 'Diesel Plant Fitter', employment_status: 'Active', leave_balance_days: 30, leave_taken_days: 0, phone: '', notes: '' })
+  const [editingPersonId, setEditingPersonId] = useState('')
+  const [leaveForm, setLeaveForm] = useState<Row>({ id: '', employee_no: '', person_name: '', leave_type: 'Annual Leave', start_date: today(), end_date: today(), status: 'Approved' })
+  const [editingLeaveId, setEditingLeaveId] = useState('')
+  const [leaveView, setLeaveView] = useState<'current' | 'upcoming' | 'past'>('current')
   const [quickForm, setQuickForm] = useState<Row>({})
 
   const selectedImportTarget = IMPORT_TARGETS.find((target) => target.table === selectedImport) || IMPORT_TARGETS[0]
@@ -1038,6 +1089,97 @@ export default function Home() {
     } finally {
       setBusyImport(false)
     }
+  }
+
+  function personNameFromLeave(row: Row) {
+    const code = String(row.employee_no || '').trim()
+    const rawName = String(row.person_name || '').trim()
+    const matchByCode = data.personnel.find((p) => String(p.employee_no || '').trim() === code || String(p.employee_no || '').trim() === rawName)
+    const matchByName = data.personnel.find((p) => normal(p.name) === normal(rawName))
+
+    return matchByCode?.name || matchByName?.name || rawName || code || 'Unknown'
+  }
+
+  function clickLeaveCard(view: 'current' | 'upcoming' | 'past') {
+    setLeaveView(view)
+    setTimeout(() => document.getElementById('leave-list')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  function editPerson(row: Row) {
+    setEditingPersonId(String(row.id || ''))
+    setPersonForm({
+      id: row.id || row.employee_no || slug(row.name) || uid(),
+      employee_no: row.employee_no || '',
+      name: row.name || '',
+      shift: row.shift || 'Shift 1',
+      section: row.section || 'Workshop',
+      role: row.role || 'Diesel Plant Fitter',
+      employment_status: row.employment_status || row.status || 'Active',
+      leave_balance_days: row.leave_balance_days ?? 30,
+      leave_taken_days: row.leave_taken_days ?? 0,
+      phone: row.phone || '',
+      notes: row.notes || ''
+    })
+
+    setTimeout(() => document.getElementById('employee-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  function clearPersonForm() {
+    setEditingPersonId('')
+    setPersonForm({ id: '', employee_no: '', name: '', shift: 'Shift 1', section: 'Workshop', role: 'Diesel Plant Fitter', employment_status: 'Active', leave_balance_days: 30, leave_taken_days: 0, phone: '', notes: '' })
+  }
+
+  async function savePersonForm() {
+    const id = personForm.id || personForm.employee_no || slug(personForm.name) || uid()
+
+    await saveRows('personnel', [{
+      ...personForm,
+      id,
+      employee_no: personForm.employee_no || '',
+      name: personForm.name || 'Unnamed employee',
+      shift: personForm.shift || 'Shift 1',
+      section: personForm.section || 'Workshop',
+      role: personForm.role || 'Workshop Employee',
+      employment_status: personForm.employment_status || 'Active',
+      leave_balance_days: num(personForm.leave_balance_days, 30),
+      leave_taken_days: num(personForm.leave_taken_days, 0)
+    }])
+
+    setEditingPersonId(id)
+  }
+
+  function editLeave(row: Row) {
+    setEditingLeaveId(String(row.id || ''))
+    setLeaveForm({
+      id: row.id || '',
+      employee_no: row.employee_no || '',
+      person_name: personNameFromLeave(row),
+      leave_type: row.leave_type || 'Annual Leave',
+      start_date: row.start_date || today(),
+      end_date: row.end_date || today(),
+      days: row.days || daysInclusive(row.start_date, row.end_date),
+      reason: row.reason || '',
+      status: row.status || 'Approved'
+    })
+
+    setTimeout(() => document.getElementById('leave-editor')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
+  }
+
+  async function saveLeaveForm() {
+    const id = leaveForm.id || `${leaveForm.employee_no || slug(leaveForm.person_name)}-${leaveForm.start_date}-${leaveForm.end_date}-${slug(leaveForm.leave_type)}`
+
+    await saveRows('leave_records', [{
+      ...leaveForm,
+      id,
+      person_name: leaveForm.person_name || '',
+      leave_type: leaveForm.leave_type || 'Annual Leave',
+      start_date: leaveForm.start_date || today(),
+      end_date: leaveForm.end_date || today(),
+      days: daysInclusive(leaveForm.start_date, leaveForm.end_date),
+      status: leaveForm.status || 'Approved'
+    }])
+
+    setEditingLeaveId(id)
   }
 
   function renderLogin() {
@@ -1242,6 +1384,15 @@ export default function Home() {
     )
   }
 
+  function ExcelButton({ table }: { table: TableName }) {
+    return (
+      <label className="excel-button">
+        Upload Excel
+        <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => handleExcelUpload(table, e.target.files?.[0])} />
+      </label>
+    )
+  }
+
   function renderFleet() {
     return (
       <div>
@@ -1284,31 +1435,90 @@ export default function Home() {
     const upcomingLeave = data.leave_records.filter(isUpcomingLeave)
     const pastLeave = data.leave_records.filter(isPastLeave)
 
+    const selectedLeaveRows =
+      leaveView === 'current'
+        ? currentLeave
+        : leaveView === 'upcoming'
+          ? upcomingLeave
+          : pastLeave
+
+    const selectedLeaveTitle =
+      leaveView === 'current'
+        ? 'Current leave / off list'
+        : leaveView === 'upcoming'
+          ? 'Upcoming leave list'
+          : 'Past leave history'
+
     return (
       <div>
-        <PageTitle title="Personnel, Shifts and Leave" subtitle="Shift 1, Shift 2, Shift 3, managers, foremen, trades, off schedule and leave history." right={<ExcelButton table="personnel" />} />
+        <PageTitle
+          title="Personnel, Shifts and Leave"
+          subtitle="Click an employee to edit details or assign them to Shift 1, Shift 2 or Shift 3. Click leave cards to open the correct leave list."
+          right={<ExcelButton table="personnel" />}
+        />
 
         <div className="stats">
-          <StatCard title="Employees" value={data.personnel.length} detail="Loaded personnel" />
-          <StatCard title="Current Leave / Off" value={currentLeave.length} detail="Away today" tone="brown" />
-          <StatCard title="Upcoming Leave" value={upcomingLeave.length} detail="Future leave records" tone="indigo" />
-          <StatCard title="Past Leave Records" value={pastLeave.length} detail="History" tone="green" />
+          <StatCard title="Employees" value={data.personnel.length} detail="Loaded personnel" onClick={() => document.getElementById('personnel-table')?.scrollIntoView({ behavior: 'smooth' })} />
+          <StatCard title="Current Leave / Off" value={currentLeave.length} detail="Away today" tone="brown" active={leaveView === 'current'} onClick={() => clickLeaveCard('current')} />
+          <StatCard title="Upcoming Leave" value={upcomingLeave.length} detail="Future leave records" tone="indigo" active={leaveView === 'upcoming'} onClick={() => clickLeaveCard('upcoming')} />
+          <StatCard title="Past Leave Records" value={pastLeave.length} detail="History" tone="green" active={leaveView === 'past'} onClick={() => clickLeaveCard('past')} />
         </div>
 
+        <section className="card" id="leave-list">
+          <PageTitle
+            title={selectedLeaveTitle}
+            subtitle="Click any leave row to edit dates, type or status."
+            right={
+              <div className="button-row">
+                <button className={leaveView === 'current' ? 'active-small' : ''} onClick={() => setLeaveView('current')}>Current</button>
+                <button className={leaveView === 'upcoming' ? 'active-small' : ''} onClick={() => setLeaveView('upcoming')}>Upcoming</button>
+                <button className={leaveView === 'past' ? 'active-small' : ''} onClick={() => setLeaveView('past')}>Past</button>
+              </div>
+            }
+          />
+
+          <MiniTable
+            rows={selectedLeaveRows}
+            empty={`No ${leaveView} leave records.`}
+            onRowClick={editLeave}
+            activeId={editingLeaveId}
+            columns={[
+              { key: 'person_name', label: 'Name', render: (r) => personNameFromLeave(r) },
+              { key: 'employee_no', label: 'Emp No' },
+              { key: 'leave_type', label: 'Type' },
+              { key: 'start_date', label: 'Start' },
+              { key: 'end_date', label: 'End' },
+              { key: 'days', label: 'Days' },
+              { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }
+            ]}
+          />
+        </section>
+
         <div className="grid-2">
-          <section className="card">
-            <h2>Add employee / slot</h2>
+          <section className="card" id="employee-editor">
+            <PageTitle
+              title={editingPersonId ? 'Edit employee / assign shift' : 'Add employee / slot'}
+              subtitle={editingPersonId ? 'You are editing the clicked employee. Change shift, role, section or status, then save.' : 'Add a new employee or vacant manpower slot.'}
+              right={editingPersonId && <Badge value="Editing" />}
+            />
+
             <div className="form-grid">
               <Field label="Employee no"><Input value={personForm.employee_no} onChange={(v) => setPersonForm({ ...personForm, employee_no: v })} /></Field>
               <Field label="Name"><Input value={personForm.name} onChange={(v) => setPersonForm({ ...personForm, name: v })} /></Field>
               <Field label="Shift"><Select value={personForm.shift} onChange={(v) => setPersonForm({ ...personForm, shift: v })} options={shiftNames} /></Field>
               <Field label="Role"><Select value={personForm.role} onChange={(v) => setPersonForm({ ...personForm, role: v })} options={personnelRoles} /></Field>
               <Field label="Section"><Select value={personForm.section} onChange={(v) => setPersonForm({ ...personForm, section: v })} options={sections} /></Field>
-              <Field label="Status"><Select value={personForm.employment_status} onChange={(v) => setPersonForm({ ...personForm, employment_status: v })} options={['Active', 'Inactive', 'On Leave', 'Off Duty']} /></Field>
+              <Field label="Status"><Select value={personForm.employment_status} onChange={(v) => setPersonForm({ ...personForm, employment_status: v })} options={['Active', 'Inactive', 'Vacant', 'On Leave', 'Off Duty']} /></Field>
+              <Field label="Phone"><Input value={personForm.phone} onChange={(v) => setPersonForm({ ...personForm, phone: v })} /></Field>
               <Field label="Leave balance"><Input type="number" value={personForm.leave_balance_days} onChange={(v) => setPersonForm({ ...personForm, leave_balance_days: v })} /></Field>
               <Field label="Leave taken"><Input type="number" value={personForm.leave_taken_days} onChange={(v) => setPersonForm({ ...personForm, leave_taken_days: v })} /></Field>
+              <Field label="Notes"><Input value={personForm.notes} onChange={(v) => setPersonForm({ ...personForm, notes: v })} /></Field>
             </div>
-            <button className="primary" onClick={() => saveRows('personnel', [{ ...personForm, id: personForm.employee_no || slug(personForm.name) || uid() }])}>Save employee</button>
+
+            <div className="button-row">
+              <button className="primary" onClick={savePersonForm}>{editingPersonId ? 'Save employee changes' : 'Save employee'}</button>
+              <button onClick={clearPersonForm}>Clear / new employee</button>
+            </div>
           </section>
 
           <section className="card">
@@ -1326,8 +1536,13 @@ export default function Home() {
           </section>
         </div>
 
-        <section className="card">
-          <h2>Leave / off schedule</h2>
+        <section className="card" id="leave-editor">
+          <PageTitle
+            title={editingLeaveId ? 'Edit leave / off record' : 'Leave / off schedule'}
+            subtitle={editingLeaveId ? 'You are editing the clicked leave record.' : 'Create leave/off/sick records. The app calculates days automatically.'}
+            right={editingLeaveId && <Badge value="Editing leave" />}
+          />
+
           <div className="form-grid">
             <Field label="Employee"><Input value={leaveForm.person_name} onChange={(v) => setLeaveForm({ ...leaveForm, person_name: v })} /></Field>
             <Field label="Employee no"><Input value={leaveForm.employee_no} onChange={(v) => setLeaveForm({ ...leaveForm, employee_no: v })} /></Field>
@@ -1335,15 +1550,27 @@ export default function Home() {
             <Field label="Start date"><Input type="date" value={leaveForm.start_date} onChange={(v) => setLeaveForm({ ...leaveForm, start_date: v })} /></Field>
             <Field label="End date"><Input type="date" value={leaveForm.end_date} onChange={(v) => setLeaveForm({ ...leaveForm, end_date: v })} /></Field>
             <Field label="Status"><Select value={leaveForm.status} onChange={(v) => setLeaveForm({ ...leaveForm, status: v })} options={['Approved', 'Pending', 'Rejected']} /></Field>
+            <Field label="Reason"><Input value={leaveForm.reason || ''} onChange={(v) => setLeaveForm({ ...leaveForm, reason: v })} /></Field>
+            <Field label="Calculated days"><Input value={daysInclusive(leaveForm.start_date, leaveForm.end_date)} onChange={() => {}} /></Field>
           </div>
-          <button className="primary" onClick={() => saveRows('leave_records', [{ ...leaveForm, id: `${leaveForm.employee_no || slug(leaveForm.person_name)}-${leaveForm.start_date}-${leaveForm.end_date}`, days: daysInclusive(leaveForm.start_date, leaveForm.end_date) }])}>Save leave</button>
+
+          <div className="button-row">
+            <button className="primary" onClick={saveLeaveForm}>{editingLeaveId ? 'Save leave changes' : 'Save leave'}</button>
+            <button onClick={() => {
+              setEditingLeaveId('')
+              setLeaveForm({ id: '', employee_no: '', person_name: '', leave_type: 'Annual Leave', start_date: today(), end_date: today(), status: 'Approved' })
+            }}>Clear / new leave</button>
+          </div>
         </section>
 
         <div className="grid-2">
-          <section className="card">
-            <h2>Personnel Register</h2>
+          <section className="card" id="personnel-table">
+            <PageTitle title="Personnel Register" subtitle="Click a person to load them into the editor above." />
+
             <MiniTable
               rows={data.personnel}
+              onRowClick={editPerson}
+              activeId={editingPersonId}
               columns={[
                 { key: 'employee_no', label: 'Emp No' },
                 { key: 'name', label: 'Name' },
@@ -1356,57 +1583,23 @@ export default function Home() {
           </section>
 
           <section className="card">
-            <h2>Current leave / off</h2>
+            <h2>Shift breakdown</h2>
             <MiniTable
-              rows={currentLeave}
+              rows={shiftNames.map((shift) => ({
+                id: shift,
+                shift,
+                employees: data.personnel.filter((p) => String(p.shift || '') === shift && String(p.employment_status || '').toLowerCase() !== 'vacant').length,
+                vacancies: data.personnel.filter((p) => String(p.shift || '') === shift && String(p.employment_status || '').toLowerCase() === 'vacant').length
+              }))}
               columns={[
-                { key: 'person_name', label: 'Name' },
-                { key: 'leave_type', label: 'Type' },
-                { key: 'start_date', label: 'Start' },
-                { key: 'end_date', label: 'End' },
-                { key: 'days', label: 'Days' }
-              ]}
-            />
-          </section>
-
-          <section className="card">
-            <h2>Upcoming leave</h2>
-            <MiniTable
-              rows={upcomingLeave}
-              columns={[
-                { key: 'person_name', label: 'Name' },
-                { key: 'leave_type', label: 'Type' },
-                { key: 'start_date', label: 'Start' },
-                { key: 'end_date', label: 'End' },
-                { key: 'days', label: 'Days' }
-              ]}
-            />
-          </section>
-
-          <section className="card">
-            <h2>Past leave records</h2>
-            <MiniTable
-              rows={pastLeave}
-              columns={[
-                { key: 'person_name', label: 'Name' },
-                { key: 'leave_type', label: 'Type' },
-                { key: 'start_date', label: 'Start' },
-                { key: 'end_date', label: 'End' },
-                { key: 'days', label: 'Days' }
+                { key: 'shift', label: 'Shift' },
+                { key: 'employees', label: 'Employees' },
+                { key: 'vacancies', label: 'Vacant slots' }
               ]}
             />
           </section>
         </div>
       </div>
-    )
-  }
-
-  function ExcelButton({ table }: { table: TableName }) {
-    return (
-      <label className="excel-button">
-        Upload Excel
-        <input type="file" accept=".xlsx,.xls,.csv" onChange={(e) => handleExcelUpload(table, e.target.files?.[0])} />
-      </label>
     )
   }
 
@@ -1638,6 +1831,7 @@ export default function Home() {
       return (
         <div>
           <PageTitle title="Admin" subtitle="Sync, local storage and system controls." />
+
           <section className="card">
             <div className="button-row">
               <button className="primary" onClick={loadAll}>Sync from Supabase</button>
@@ -1725,9 +1919,7 @@ const baseStyles = `
     --warn: #ffd28a;
   }
 
-  * {
-    box-sizing: border-box;
-  }
+  * { box-sizing: border-box; }
 
   body {
     margin: 0;
@@ -1738,9 +1930,7 @@ const baseStyles = `
     font-family: Arial, Helvetica, sans-serif;
   }
 
-  button, input, select, textarea {
-    font: inherit;
-  }
+  button, input, select, textarea { font: inherit; }
 
   button {
     border: 1px solid var(--line);
@@ -1752,9 +1942,7 @@ const baseStyles = `
     font-weight: 800;
   }
 
-  button:hover {
-    border-color: var(--blue);
-  }
+  button:hover { border-color: var(--blue); }
 
   .primary {
     background: linear-gradient(135deg, var(--orange), #ffae4d);
@@ -1763,9 +1951,7 @@ const baseStyles = `
     font-weight: 900;
   }
 
-  .full {
-    width: 100%;
-  }
+  .full { width: 100%; }
 
   .login-shell {
     min-height: 100vh;
@@ -1834,7 +2020,8 @@ const baseStyles = `
     border-radius: 14px;
   }
 
-  nav button.active {
+  nav button.active,
+  .active-small {
     background: rgba(255,122,26,.18);
     border-color: var(--orange);
     box-shadow: inset 4px 0 0 var(--orange);
@@ -1911,6 +2098,11 @@ const baseStyles = `
     overflow: hidden;
   }
 
+  .stat-card.selected-stat {
+    border-color: var(--orange);
+    box-shadow: 0 0 0 2px rgba(255,122,26,.28), 0 14px 45px rgba(0,0,0,.28);
+  }
+
   .stat-card::after {
     content: '';
     position: absolute;
@@ -1936,9 +2128,7 @@ const baseStyles = `
     margin-top: 10px;
   }
 
-  .stat-card small {
-    color: #d7eaff;
-  }
+  .stat-card small { color: #d7eaff; }
 
   .stat-card.purple { background: linear-gradient(135deg, rgba(77,45,91,.95), rgba(32,42,82,.95)); }
   .stat-card.brown { background: linear-gradient(135deg, rgba(86,55,38,.95), rgba(34,45,60,.95)); }
@@ -1969,9 +2159,7 @@ const baseStyles = `
     margin-bottom: 18px;
   }
 
-  .card h2 {
-    margin: 0 0 12px;
-  }
+  .card h2 { margin: 0 0 12px; }
 
   .form-grid {
     display: grid;
@@ -2153,6 +2341,19 @@ const baseStyles = `
     background: rgba(0,0,0,.24);
     text-transform: uppercase;
     letter-spacing: .06em;
+  }
+
+  .click-row {
+    cursor: pointer;
+  }
+
+  .click-row:hover {
+    background: rgba(255,122,26,.10);
+  }
+
+  .active-row {
+    background: rgba(255,122,26,.18);
+    outline: 1px solid rgba(255,122,26,.45);
   }
 
   .empty {
