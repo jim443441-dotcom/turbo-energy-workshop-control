@@ -502,8 +502,8 @@ function departmentSummaryRows(machines: Row[]) {
     const department = String(machine.department || 'Unallocated').trim() || 'Unallocated'
     const existing = map.get(department) || { id: department, department, total: 0, available: 0, breakdown: 0, fleet_list: '' }
     existing.total += 1
-    if (String(machine.status || '').toLowerCase().includes('available')) existing.available += 1
-    if (String(machine.status || '').toLowerCase().includes('break')) existing.breakdown += 1
+    if (String(machine.status || '').toLowerCase().includes('available') && !isAvailabilityReportStatusDown(machine.status)) existing.available += 1
+    if (isAvailabilityReportStatusDown(machine.status)) existing.breakdown += 1
     existing.fleet_list = [existing.fleet_list, machine.fleet_no].filter(Boolean).join(', ')
     map.set(department, existing)
   })
@@ -654,6 +654,144 @@ function parseService(row: Row) {
   })
 }
 
+
+function availabilityReportHeaderIndex(allCells: any[][]) {
+  return allCells.findIndex((line) => {
+    const n = line.map((cell) => normal(cell))
+    return n.includes('fleet') && n.includes('machine') && n.includes('type') && n.includes('department') && n.includes('status') && n.some((v) => v.includes('machineavailability'))
+  })
+}
+
+function availabilityReportDate(allCells: any[][]) {
+  const generated = allCells.find((line) => normal(line[0]) === 'generatedon')
+  const range = allCells.find((line) => normal(line[0]) === 'daterange')
+  return {
+    generated_on: String(generated?.[1] || '').trim(),
+    date_range: String(range?.[1] || '').trim()
+  }
+}
+
+function availabilityValue(row: Row, aliases: string[]) {
+  return getCell(row, aliases)
+}
+
+function isAvailabilityReportStatusDown(statusValue: any) {
+  const status = String(statusValue || '').trim().toLowerCase()
+  if (!status) return false
+  if (status === 'available') return false
+  if (status.includes('available')) return false
+  return ['down', 'repair', 'maintenance', 'major repair', 'breakdown', 'offline'].some((word) => status.includes(word))
+}
+
+function availabilityReportMachineRows(allCells: any[][]) {
+  const headerIndex = availabilityReportHeaderIndex(allCells)
+  if (headerIndex < 0) return []
+
+  const meta = availabilityReportDate(allCells)
+  const importBatch = `availability-${Date.now()}`
+  const headers = allCells[headerIndex].map((heading, index) => String(heading || `Column ${index + 1}`).trim() || `Column ${index + 1}`)
+  const rows: Row[] = []
+
+  for (const line of allCells.slice(headerIndex + 1)) {
+    if (!line.length || line.every((cell) => String(cell || '').trim() === '')) break
+
+    const raw: Row = { __cells: line }
+    headers.forEach((heading, index) => {
+      raw[heading] = line[index]
+    })
+
+    const fleetNo = cleanFleetNo(availabilityValue(raw, ['Fleet', 'Fleet No', 'Machine No']))
+    if (!fleetNo || !isLikelyFleetNo(fleetNo)) continue
+
+    const machine = String(availabilityValue(raw, ['Machine', 'Description']) || '').trim()
+    const type = String(availabilityValue(raw, ['Type', 'Machine Type']) || inferMachineType(fleetNo, machine)).trim()
+    const department = String(availabilityValue(raw, ['Department', 'Dept']) || 'Workshop').trim()
+    const status = String(availabilityValue(raw, ['Status']) || 'Available').trim()
+    const included = String(availabilityValue(raw, ['Included']) || 'Yes').trim()
+    const reasonRaw = String(availabilityValue(raw, ['Reason', 'Downtime Reason', 'Breakdown Reason']) || '').trim()
+    const reason = reasonRaw && reasonRaw !== '-' ? reasonRaw : ''
+    const hoursDown = Math.round(num(availabilityValue(raw, ['Hours down', 'Hours Down']), 0) * 10) / 10
+    const hoursWorked = Math.round(num(availabilityValue(raw, ['Hours worked', 'Hours Worked']), 0) * 10) / 10
+    const availabilityPercent = Math.round(num(availabilityValue(raw, ['Machine availability %', 'Availability %']), 0) * 10) / 10
+
+    rows.push(cleanRow({
+      id: fleetNo,
+      fleet_no: fleetNo,
+      machine_type: type || inferMachineType(fleetNo, machine),
+      make_model: machine,
+      reg_no: fleetNo.startsWith('A') ? fleetNo : '',
+      department,
+      location: department,
+      status,
+      included,
+      availability_percent: availabilityPercent,
+      same_type_availability_percent: Math.round(num(availabilityValue(raw, ['Same type availability %']), 0) * 10) / 10,
+      department_availability_percent: Math.round(num(availabilityValue(raw, ['Department availability %']), 0) * 10) / 10,
+      department_type_availability_percent: Math.round(num(availabilityValue(raw, ['Department + type availability %']), 0) * 10) / 10,
+      hours_worked: hoursWorked,
+      hours_down: hoursDown,
+      downtime_reason: reason,
+      online_status: isAvailabilityReportStatusDown(status) ? 'Offline' : 'Online',
+      major_repair_excluded: normal(status).includes('majorrepair') || normal(included) === 'no',
+      availability_source: 'machine_availability_report',
+      import_batch: importBatch,
+      report_generated_on: meta.generated_on,
+      report_date_range: meta.date_range,
+      notes: reason || `Imported from machine availability report${meta.date_range ? ` (${meta.date_range})` : ''}`
+    }))
+  }
+
+  return rows
+}
+
+function availabilityReportBreakdownRows(allCells: any[][]) {
+  const machines = availabilityReportMachineRows(allCells)
+  return machines
+    .filter((machine) => isAvailabilityReportStatusDown(machine.status))
+    .map((machine) => cleanRow({
+      id: `availability-${machine.import_batch}-${machine.fleet_no}`,
+      fleet_no: machine.fleet_no,
+      machine_type: machine.machine_type,
+      department: machine.department,
+      category: machine.status,
+      fault: machine.downtime_reason || machine.status || 'Not available',
+      reported_by: 'Availability report',
+      assigned_to: '',
+      start_time: machine.report_generated_on || today(),
+      status: machine.status || 'Open',
+      spare_eta: '',
+      hours_down: machine.hours_down,
+      hours_worked: machine.hours_worked,
+      availability_percent: machine.availability_percent,
+      included: machine.included,
+      major_repair_excluded: machine.major_repair_excluded,
+      availability_source: 'machine_availability_report',
+      import_batch: machine.import_batch,
+      report_generated_on: machine.report_generated_on,
+      report_date_range: machine.report_date_range,
+      notes: machine.downtime_reason || `Imported from machine availability report${machine.report_date_range ? ` (${machine.report_date_range})` : ''}`
+    }))
+}
+
+function latestBreakdownRows(rows: Row[]) {
+  const reportRows = rows.filter((row) => String(row.availability_source || '') === 'machine_availability_report' || String(row.import_batch || '').startsWith('availability-'))
+  const manualRows = rows.filter((row) => !(String(row.availability_source || '') === 'machine_availability_report' || String(row.import_batch || '').startsWith('availability-')))
+
+  if (!reportRows.length) return manualRows.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
+
+  const latestBatch = reportRows
+    .map((row) => String(row.import_batch || '').trim())
+    .filter(Boolean)
+    .sort()
+    .slice(-1)[0]
+
+  const latestReport = reportRows.filter((row) => String(row.import_batch || '') === latestBatch)
+  const reportFleet = new Set(latestReport.map((row) => cleanFleetNo(row.fleet_no)))
+  const openManual = manualRows.filter((row) => !String(row.status || '').toLowerCase().includes('complete') && !reportFleet.has(cleanFleetNo(row.fleet_no)))
+
+  return [...latestReport, ...openManual]
+}
+
 function parseGeneric(table: TableName, row: Row) {
   const fleetNo = String(getCell(row, ['Fleet', 'Fleet No', 'Machine', 'Unit']) || '').trim()
   const partNo = String(getCell(row, ['Part No', 'Part Number', 'Stock Code', 'Item No']) || '').trim()
@@ -788,6 +926,10 @@ function parseRows(table: TableName, rawRows: Row[], allCells: any[][]) {
       rows = Array.from(map.values())
     }
   } else if (table === 'services') rows = rawRows.map(parseService).filter(Boolean) as Row[]
+  else if (table === 'breakdowns') {
+    const availabilityRows = availabilityReportBreakdownRows(allCells)
+    rows = availabilityRows.length ? availabilityRows : rawRows.map((row) => parseGeneric(table, row)).filter(Boolean) as Row[]
+  }
   else rows = rawRows.map((row) => parseGeneric(table, row)).filter(Boolean) as Row[]
 
   const map = new Map<string, Row>()
@@ -798,7 +940,9 @@ function parseRows(table: TableName, rawRows: Row[], allCells: any[][]) {
         ? String(row.fleet_no || row.id)
         : table === 'services'
           ? String(row.id || `${row.fleet_no}-${row.next_service_hours || row.scheduled_hours || row.service_type}`)
-          : String(row.id || uid())
+          : table === 'breakdowns'
+            ? String(row.id || `${row.import_batch || 'manual'}-${row.fleet_no || uid()}`)
+            : String(row.id || uid())
     if (!key.trim()) return
     map.set(key, { ...row, id: key })
   })
@@ -973,7 +1117,7 @@ export default function Home() {
   const dashboard = useMemo(() => {
     const activeFleet = activeFleetRows(data.fleet_machines)
     const totalFleet = activeFleet.length
-    const breakdowns = data.breakdowns.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
+    const breakdowns = latestBreakdownRows(data.breakdowns)
     const repairs = data.repairs.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
     const activeServices = latestServiceRows(data.services)
     const servicesDue = activeServices.filter((row) => ['due', 'overdue'].includes(String(row.status || '').toLowerCase()))
@@ -1109,13 +1253,15 @@ export default function Home() {
       const parsed = await readWorkbook(file)
       setImportHeadings(parsed.headings)
       const rows = parseRows(table, parsed.rows, parsed.allCells)
+      const availabilityFleetRows = table === 'breakdowns' ? availabilityReportMachineRows(parsed.allCells) : []
       setImportPreview(rows.slice(0, 15))
-      if (!rows.length) {
+      if (!rows.length && !availabilityFleetRows.length) {
         setImportStatus(`No usable rows found for ${IMPORT_TARGETS.find((t) => t.table === table)?.label || table}.`)
         return
       }
-      await saveRows(table, rows)
-      setImportStatus(`Uploaded ${rows.length} records to ${IMPORT_TARGETS.find((t) => t.table === table)?.label || table}.`)
+      if (availabilityFleetRows.length) await saveRows('fleet_machines', availabilityFleetRows)
+      if (rows.length) await saveRows(table, rows)
+      setImportStatus(availabilityFleetRows.length ? `Uploaded ${availabilityFleetRows.length} machines and ${rows.length} current breakdown/availability records.` : `Uploaded ${rows.length} records to ${IMPORT_TARGETS.find((t) => t.table === table)?.label || table}.`)
     } catch (err: any) {
       setImportStatus(`Upload failed: ${err?.message || 'Unknown error'}`)
     } finally {
@@ -1337,7 +1483,7 @@ export default function Home() {
               <PageTitle title={selectedImportTarget.label} subtitle={selectedImportTarget.description} right={<Badge value={selectedImportTarget.table} />} />
               <div className="upload-box">
                 <input type="file" accept=".xlsx,.xls,.csv" disabled={busyImport} onChange={(e) => { handleExcelUpload(selectedImport, e.target.files?.[0]); e.currentTarget.value = '' }} />
-                <p>Service sheet reads FLEET No, ODO READING AT LAST SERVICE, SERVICE INTERVAL, NEXT SERVICE TYPE, ODO READING AT SERVICE, PERCENT DONE, HOURS TILL SERVICE DUE, ESTIMATE DAYS TILL SERVICE and comments.</p>
+                <p>Service sheet reads service hours. Breakdown upload reads the machine availability report: Fleet, Machine, Type, Department, Status, Included, Availability %, Hours Down and Reason.</p>
               </div>
               <div className="message">{importStatus}</div>
               <div className="meta-grid"><div><span>Selected</span><b>{selectedImportTarget.label}</b></div><div><span>Table</span><b>{selectedImportTarget.table}</b></div><div><span>File</span><b>{importFile || 'None'}</b></div><div><span>Mode</span><b>Upsert / Update</b></div></div>
@@ -1494,7 +1640,7 @@ export default function Home() {
 
     return [
       ...latestServiceRows(data.services).filter(matchFleet).map((row) => ({ ...row, event_type: 'Service', event_text: row.service_type || row.next_service_type || 'Service', event_status: row.status })),
-      ...data.breakdowns.filter(matchFleet).map((row) => ({ ...row, event_type: 'Breakdown', event_text: row.fault || row.description || 'Breakdown', event_status: row.status })),
+      ...latestBreakdownRows(data.breakdowns).filter(matchFleet).map((row) => ({ ...row, event_type: 'Breakdown', event_text: row.fault || row.description || row.notes || 'Breakdown', event_status: row.status })),
       ...data.repairs.filter(matchFleet).map((row) => ({ ...row, event_type: 'Repair', event_text: row.fault || row.description || row.job_card_no || 'Repair', event_status: row.status })),
       ...data.spares_orders.filter(matchFleet).map((row) => ({ ...row, event_type: 'Spares order', event_text: row.description || row.part_no || 'Spares', event_status: row.status || row.workflow_stage })),
       ...data.tyres.filter(matchFleet).map((row) => ({ ...row, event_type: 'Tyre', event_text: row.serial_no || row.make || 'Tyre', event_status: row.status })),
@@ -1533,6 +1679,53 @@ export default function Home() {
         </div>}
       </div>
     )
+  }
+
+
+  function renderBreakdownsPage() {
+    const rows = latestBreakdownRows(data.breakdowns)
+    const downNow = rows.filter((row) => String(row.status || '').toLowerCase().includes('down')).length
+    const repairsNow = rows.filter((row) => String(row.status || '').toLowerCase().includes('repair') && !String(row.status || '').toLowerCase().includes('major')).length
+    const maintenanceNow = rows.filter((row) => String(row.status || '').toLowerCase().includes('maintenance')).length
+    const majorNow = rows.filter((row) => String(row.status || '').toLowerCase().includes('major')).length
+
+    return <div>
+      <PageTitle title="Breakdowns & Availability" subtitle="Upload the machine availability report. It updates machine status, department, hours down, availability percentage and current breakdown list without removing previous progress." right={<><ExcelButton table="breakdowns" /><PhotoUploadBox linkedType="Breakdowns" /></>} />
+      <div className="stats">
+        <StatCard title="Current Issues" value={rows.length} detail="Latest report + manual open jobs" tone="purple" />
+        <StatCard title="Down" value={downNow} detail="Status down/offline" tone="brown" />
+        <StatCard title="Repairs" value={repairsNow} detail="Machines under repair" tone="indigo" />
+        <StatCard title="Maintenance / Major" value={maintenanceNow + majorNow} detail={`${maintenanceNow} maintenance / ${majorNow} major`} tone="steel" />
+      </div>
+      <div className="grid-2">
+        <section className="card"><h2>Manual breakdown entry</h2>{renderModuleForm('breakdown-manual', 'breakdowns', [
+          { key: 'fleet_no', label: 'Fleet number' },
+          { key: 'fault', label: 'Fault / reason' },
+          { key: 'department', label: 'Department', options: sections },
+          { key: 'category', label: 'Category', options: ['Mechanical', 'Electrical', 'Hydraulic', 'Tyres', 'Service', 'Accident', 'Major Repair'] },
+          { key: 'reported_by', label: 'Reported by' },
+          { key: 'assigned_to', label: 'Assigned to' },
+          { key: 'status', label: 'Status', options: ['Open', 'Down', 'Repair', 'Maintenance', 'Major Repair', 'Completed'] },
+          { key: 'hours_down', label: 'Hours down', type: 'number' },
+          { key: 'spare_eta', label: 'Spares ETA', type: 'date' },
+          { key: 'notes', label: 'Notes' }
+        ], { status: 'Open', category: 'Mechanical', hours_down: 0 })}</section>
+        <section className="card"><h2>Machine search / history</h2>{renderMachineLookup('Breakdowns')}</section>
+      </div>
+      <section className="card"><PageTitle title="Current machines on breakdown / not available" subtitle="These rows come from the latest uploaded machine availability report plus manual open breakdowns. Click Upload Excel and select machine-availability-report.csv." />
+        <MiniTable rows={rows} empty="No current breakdown or availability report loaded yet." columns={[
+          { key: 'fleet_no', label: 'Fleet' },
+          { key: 'machine_type', label: 'Type' },
+          { key: 'department', label: 'Department' },
+          { key: 'fault', label: 'Fault / Reason' },
+          { key: 'hours_down', label: 'Hours Down' },
+          { key: 'availability_percent', label: 'Avail %' },
+          { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> },
+          { key: 'included', label: 'Included' }
+        ]} />
+      </section>
+      <section className="card"><h2>Breakdown photos</h2><PhotoGallery linkedType="Breakdowns" /></section>
+    </div>
   }
 
   function renderSparesPage() {
@@ -1744,7 +1937,7 @@ export default function Home() {
     if (tab === 'reports') return renderReports()
     if (tab === 'photos') return renderPhotos()
 
-    if (tab === 'breakdowns') return renderGenericPage('Breakdowns', 'Breakdown reports, faults, spares ETA and assigned fitters.', 'breakdowns', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'spare_eta', label: 'Spares ETA' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
+    if (tab === 'breakdowns') return renderBreakdownsPage()
     if (tab === 'repairs') return renderGenericPage('Repairs / Job Cards', 'Repairs, job cards, parts used and fitters.', 'repairs', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
     if (tab === 'tyres') return renderTyresPage()
     if (tab === 'batteries') return renderBatteriesPage()
