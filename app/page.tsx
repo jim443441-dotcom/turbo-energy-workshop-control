@@ -417,10 +417,14 @@ function inferMachineType(value: any, textValue = '') {
   return 'Machine'
 }
 
-function serviceStatus(hoursTill: number, percentDone: number) {
-  if (hoursTill <= 0 || percentDone >= 1) return 'Due'
-  if (hoursTill <= 50 || percentDone >= 0.95) return 'Due Soon'
-  if (hoursTill <= 250 || percentDone >= 0.85) return 'Upcoming'
+function serviceStatus(hoursTillValue: any, percentDoneValue: any, hasServiceNumbers = true) {
+  const hoursTill = Number(hoursTillValue)
+  const percentDone = Number(percentDoneValue)
+
+  if (!hasServiceNumbers || !Number.isFinite(hoursTill)) return 'Scheduled'
+  if (hoursTill <= 0) return 'Due'
+  if (hoursTill <= 50 || percentDone >= 0.98) return 'Due Soon'
+  if (hoursTill <= 250 || percentDone >= 0.90) return 'Upcoming'
   return 'Scheduled'
 }
 
@@ -516,11 +520,14 @@ function parseService(row: Row) {
   const nextServiceHours = num(getCell(row, ['ODO READING AT SERVICE', 'ODO READING      AT SERVICE', 'Next Service Hours', 'Service Due Hours']), 0)
   const percentDoneRaw = num(getCell(row, ['PERCENT DONE', 'Percent Done']), 0)
   const percentDone = percentDoneRaw > 1 ? percentDoneRaw / 100 : percentDoneRaw
-  const hoursTill = num(getCell(row, ['HOURS TILL SERVICE DUE', 'Hours Till Service Due', 'Hours To Service']), nextServiceHours && currentReading ? nextServiceHours - currentReading : 0)
+  const explicitHoursTill = getCell(row, ['HOURS TILL SERVICE DUE', 'Hours Till Service Due', 'Hours To Service'])
+  const calculatedHoursTill = nextServiceHours && currentReading ? nextServiceHours - currentReading : undefined
+  const hoursTill = num(explicitHoursTill, calculatedHoursTill ?? 999999)
   const estimateDays = num(getCell(row, ['ESTIMATE DAYS TILL SERVICE', 'Estimate Days Till Service', 'Days Till Service']), 0)
   const totalHours = num(getCell(row, ['TOTAL HRS TO DATE', 'Total Hrs To Date', 'Total Hours']), currentReading)
   const comments = String(getCell(row, ['COMMENTS', 'Comments', 'Coments', 'Coments/ Filter change']) || '').trim()
-  const status = serviceStatus(hoursTill, percentDone)
+  const hasServiceNumbers = Boolean(fleetNo && (currentReading || nextServiceHours || explicitHoursTill !== ''))
+  const status = serviceStatus(hoursTill, percentDone, hasServiceNumbers)
 
   return cleanRow({
     id: `${fleetNo}-${nextServiceHours || lastService || currentReading}-${nextServiceType || 'service'}`,
@@ -740,6 +747,23 @@ function mergeRows(existing: Row[], incoming: Row[]) {
   return Array.from(map.values())
 }
 
+
+function latestServiceRows(rows: Row[]) {
+  const batches = rows
+    .map((row) => String(row.import_batch || '').trim())
+    .filter(Boolean)
+    .sort()
+
+  if (!batches.length) return rows
+
+  const latest = batches[batches.length - 1]
+  return rows.filter((row) => String(row.import_batch || '') === latest)
+}
+
+function sortedByHoursLeft(rows: Row[]) {
+  return [...rows].sort((a, b) => num(a.hours_till_service_due, 999999) - num(b.hours_till_service_due, 999999))
+}
+
 function statusClass(value: any) {
   const text = String(value || '').toLowerCase()
   if (text.includes('overdue') || text === 'due' || text.includes('open') || text.includes('break') || text.includes('awaiting') || text.includes('low') || text.includes('critical')) return 'danger'
@@ -836,6 +860,9 @@ export default function Home() {
   const [editingLeaveId, setEditingLeaveId] = useState('')
   const [leaveView, setLeaveView] = useState<'current' | 'upcoming' | 'past'>('current')
   const [quickForm, setQuickForm] = useState<Row>({})
+  const [moduleForms, setModuleForms] = useState<Record<string, Row>>({})
+  const [machineLookup, setMachineLookup] = useState('')
+  const [selectedMachine, setSelectedMachine] = useState('')
 
   const selectedImportTarget = IMPORT_TARGETS.find((target) => target.table === selectedImport) || IMPORT_TARGETS[0]
   const filteredTargets = useMemo(() => {
@@ -847,8 +874,9 @@ export default function Home() {
     const totalFleet = data.fleet_machines.length
     const breakdowns = data.breakdowns.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
     const repairs = data.repairs.filter((row) => !String(row.status || '').toLowerCase().includes('complete'))
-    const servicesDue = data.services.filter((row) => ['due', 'overdue', 'due soon'].includes(String(row.status || '').toLowerCase()))
-    const serviceDueNow = data.services.filter((row) => ['due', 'overdue'].includes(String(row.status || '').toLowerCase()))
+    const activeServices = latestServiceRows(data.services)
+    const servicesDue = activeServices.filter((row) => ['due', 'overdue'].includes(String(row.status || '').toLowerCase()))
+    const serviceDueNow = servicesDue
     const currentLeave = data.leave_records.filter(isCurrentLeave)
     const foremen = data.personnel.filter((row) => String(row.role || '').toLowerCase().includes('foreman') && !String(row.employment_status || '').toLowerCase().includes('inactive'))
     const lowSpares = data.spares.filter((row) => num(row.stock_qty) <= num(row.min_qty, 1))
@@ -1282,11 +1310,220 @@ export default function Home() {
     )
   }
 
+
+  function getForm(key: string, defaults: Row = {}) {
+    return { ...defaults, ...(moduleForms[key] || {}) }
+  }
+
+  function setFormValue(key: string, field: string, value: any) {
+    setModuleForms((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), [field]: value } }))
+  }
+
+  function clearForm(key: string) {
+    setModuleForms((prev) => ({ ...prev, [key]: {} }))
+  }
+
+  function renderModuleForm(formKey: string, table: TableName, fields: { key: string; label: string; type?: string; options?: string[] }[], defaults: Row = {}) {
+    const form = getForm(formKey, defaults)
+
+    return (
+      <>
+        <div className="form-grid">
+          {fields.map((field) => (
+            <Field label={field.label} key={field.key}>
+              {field.options
+                ? <Select value={form[field.key] ?? defaults[field.key] ?? field.options[0]} onChange={(v) => setFormValue(formKey, field.key, v)} options={field.options} />
+                : <Input type={field.type || 'text'} value={form[field.key] ?? defaults[field.key] ?? ''} onChange={(v) => setFormValue(formKey, field.key, v)} />}
+            </Field>
+          ))}
+        </div>
+        <div className="button-row">
+          <button className="primary" onClick={() => {
+            const payload = { ...defaults, ...form, id: form.id || uid(), request_date: form.request_date || today(), created_at: nowIso() }
+            if (table === 'services') {
+              const current = num(payload.current_hours, 0)
+              const last = num(payload.last_service_hours, 0)
+              const interval = num(payload.service_interval, 250)
+              const next = num(payload.next_service_hours, last + interval)
+              const hoursLeft = next ? next - current : num(payload.hours_till_service_due, 999999)
+              payload.next_service_hours = next
+              payload.hours_till_service_due = Math.round(hoursLeft * 10) / 10
+              payload.status = payload.status || serviceStatus(hoursLeft, interval ? (current - last) / interval : 0, true)
+              payload.import_batch = 'manual-entry'
+            }
+            saveRows(table, [payload])
+          }}>Save entry</button>
+          <button onClick={() => clearForm(formKey)}>Clear</button>
+        </div>
+      </>
+    )
+  }
+
+  function machineEvents(fleetNo: string) {
+    const f = String(fleetNo || '').toLowerCase().trim()
+    if (!f) return []
+
+    const matchFleet = (row: Row) => [row.fleet_no, row.machine_fleet_no, row.fleet, row.machine, row.unit]
+      .some((value) => String(value || '').toLowerCase().includes(f))
+
+    return [
+      ...latestServiceRows(data.services).filter(matchFleet).map((row) => ({ ...row, event_type: 'Service', event_text: row.service_type || row.next_service_type || 'Service', event_status: row.status })),
+      ...data.breakdowns.filter(matchFleet).map((row) => ({ ...row, event_type: 'Breakdown', event_text: row.fault || row.description || 'Breakdown', event_status: row.status })),
+      ...data.repairs.filter(matchFleet).map((row) => ({ ...row, event_type: 'Repair', event_text: row.fault || row.description || row.job_card_no || 'Repair', event_status: row.status })),
+      ...data.spares_orders.filter(matchFleet).map((row) => ({ ...row, event_type: 'Spares order', event_text: row.description || row.part_no || 'Spares', event_status: row.status || row.workflow_stage })),
+      ...data.tyres.filter(matchFleet).map((row) => ({ ...row, event_type: 'Tyre', event_text: row.serial_no || row.make || 'Tyre', event_status: row.status })),
+      ...data.tyre_measurements.filter(matchFleet).map((row) => ({ ...row, event_type: 'Tyre measurement', event_text: row.position || row.tread_depth || 'Measurement', event_status: row.status })),
+      ...data.batteries.filter(matchFleet).map((row) => ({ ...row, event_type: 'Battery', event_text: row.serial_no || row.make || 'Battery', event_status: row.status })),
+      ...data.hose_requests.filter(matchFleet).map((row) => ({ ...row, event_type: 'Hose request', event_text: row.hose_type || row.description || 'Hose', event_status: row.status })),
+      ...data.photo_logs.filter(matchFleet).map((row) => ({ ...row, event_type: 'Photo', event_text: row.caption || row.linked_type || 'Photo', event_status: 'Photo' }))
+    ].slice(0, 200)
+  }
+
+  function renderMachineLookup(scope: string = 'all') {
+    const q = machineLookup.toLowerCase().trim()
+    const serviceRows = latestServiceRows(data.services)
+    const fleetMatches = data.fleet_machines.filter((m) => `${m.fleet_no || ''} ${m.make_model || ''} ${m.machine_type || ''}`.toLowerCase().includes(q))
+    const serviceMatches = serviceRows.filter((m) => String(m.fleet_no || '').toLowerCase().includes(q))
+    const choices = (q ? [...fleetMatches, ...serviceMatches] : []).slice(0, 12)
+    const target = selectedMachine || (choices[0]?.fleet_no || '')
+    const events = machineEvents(target)
+
+    return (
+      <div className="machine-lookup">
+        <div className="form-grid">
+          <Field label="Search fleet / machine history">
+            <Input value={machineLookup} onChange={(v) => { setMachineLookup(v); setSelectedMachine('') }} placeholder="Type fleet number e.g. FEL 1, AFQ 5794, HT 01" />
+          </Field>
+          <Field label="Selected machine">
+            <Input value={target} onChange={setSelectedMachine} placeholder="Click a result below or type fleet number" />
+          </Field>
+        </div>
+        {q && <div className="chip-row machine-results">
+          {choices.length ? choices.map((row) => <button key={`${row.fleet_no}-${row.id}`} onClick={() => setSelectedMachine(String(row.fleet_no || ''))}>{row.fleet_no} {row.machine_type ? `• ${row.machine_type}` : ''}</button>) : <span className="chip">No machine found</span>}
+        </div>}
+        {target && <div className="grid-2">
+          <section className="mini-panel"><h3>{target} history</h3><MiniTable rows={events} empty="No history for this machine yet." columns={[{ key: 'event_type', label: 'Type' }, { key: 'event_text', label: 'Details' }, { key: 'hours_till_service_due', label: 'Hours Left' }, { key: 'event_status', label: 'Status', render: (r) => <Badge value={r.event_status} /> }]} /></section>
+          <section className="mini-panel"><h3>{target} photos / reminders</h3><PhotoUploadBox linkedType={scope === 'all' ? 'Machine History' : scope} fleetNo={target} /><PhotoGallery fleetNo={target} limit={6} /></section>
+        </div>}
+      </div>
+    )
+  }
+
+  function renderSparesPage() {
+    const lowStock = data.spares.filter((r) => num(r.stock_qty) <= num(r.min_qty, 1))
+    return <div>
+      <PageTitle title="Spares & Orders" subtitle="Stock, requests, awaiting funding, funded, local/international orders and delivery ETA." right={<><ExcelButton table="spares" /><PhotoUploadBox linkedType="Spares & Orders" /></>} />
+      <div className="stats">{orderStages.map((stage) => <StatCard key={stage} title={stage} value={data.spares_orders.filter((r) => String(r.workflow_stage || r.status) === stage).length} detail="Spares orders" />)}</div>
+      <div className="grid-2">
+        <section className="card"><h2>Request spares / order</h2>{renderModuleForm('spares-order', 'spares_orders', [
+          { key: 'machine_fleet_no', label: 'Fleet number' }, { key: 'request_date', label: 'Date', type: 'date' }, { key: 'requested_by', label: 'Requested by' }, { key: 'part_no', label: 'Part number' }, { key: 'description', label: 'Description' }, { key: 'qty', label: 'Qty', type: 'number' }, { key: 'priority', label: 'Priority', options: ['Low', 'Normal', 'High', 'Critical'] }, { key: 'workflow_stage', label: 'Workflow stage', options: orderStages }, { key: 'order_type', label: 'Order type', options: ['Local Order', 'International Order', 'Quote Only'] }, { key: 'eta', label: 'ETA', type: 'date' }, { key: 'notes', label: 'Notes' }
+        ], { request_date: today(), qty: 1, workflow_stage: 'Requested', status: 'Requested', priority: 'Normal' })}</section>
+        <section className="card"><h2>Add / update stock</h2>{renderModuleForm('spares-stock', 'spares', [
+          { key: 'part_no', label: 'Part number' }, { key: 'description', label: 'Description' }, { key: 'machine_type', label: 'Machine type' }, { key: 'stock_qty', label: 'Stock qty', type: 'number' }, { key: 'min_qty', label: 'Minimum qty', type: 'number' }, { key: 'supplier', label: 'Supplier' }, { key: 'shelf_location', label: 'Shelf / bin' }, { key: 'order_status', label: 'Stock status', options: ['In stock', 'Low stock', 'Out of stock', 'Ordered'] }
+        ], { stock_qty: 0, min_qty: 1, order_status: 'In stock' })}</section>
+      </div>
+      <section className="card"><h2>Low stock reminders</h2><MiniTable rows={lowStock} empty="No low stock reminders." columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }, { key: 'supplier', label: 'Supplier' }]} /></section>
+      <div className="grid-2"><section className="card"><h2>Spares stock</h2><ExcelButton table="spares" /><MiniTable rows={data.spares} columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }, { key: 'order_status', label: 'Status', render: (r) => <Badge value={r.order_status} /> }]} /></section><section className="card"><h2>Spares orders</h2><ExcelButton table="spares_orders" /><MiniTable rows={data.spares_orders} columns={[{ key: 'machine_fleet_no', label: 'Fleet' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'qty', label: 'Qty' }, { key: 'workflow_stage', label: 'Stage', render: (r) => <Badge value={r.workflow_stage || r.status} /> }, { key: 'eta', label: 'ETA' }]} /></section></div>
+      <section className="card"><h2>Spares photos</h2><PhotoGallery linkedType="Spares & Orders" /></section>
+    </div>
+  }
+
+  function renderTyresPage() {
+    return <div>
+      <PageTitle title="Tyres" subtitle="Tyre register, repair requests, measurements, stock, reminders and ordering." right={<><ExcelButton table="tyres" /><PhotoUploadBox linkedType="Tyres" /></>} />
+      <div className="grid-2">
+        <section className="card"><h2>Fit / register tyre</h2>{renderModuleForm('tyre-register', 'tyres', [
+          { key: 'fleet_no', label: 'Fleet number' }, { key: 'position', label: 'Position' }, { key: 'make', label: 'Tyre make' }, { key: 'serial_no', label: 'Serial number' }, { key: 'company_no', label: 'Company number' }, { key: 'size', label: 'Size' }, { key: 'fitted_date', label: 'Date fitted', type: 'date' }, { key: 'fitted_by', label: 'Fitted by' }, { key: 'current_hours', label: 'Hours / mileage fitted', type: 'number' }, { key: 'status', label: 'Status', options: ['Fitted', 'In stock', 'Removed', 'Scrap', 'Repair'] }
+        ], { fitted_date: today(), status: 'Fitted' })}</section>
+        <section className="card"><h2>Tyre repair / measurement</h2>{renderModuleForm('tyre-measure', 'tyre_measurements', [
+          { key: 'fleet_no', label: 'Fleet number' }, { key: 'position', label: 'Position' }, { key: 'measurement_date', label: 'Date', type: 'date' }, { key: 'tread_depth', label: 'Tread depth', type: 'number' }, { key: 'pressure', label: 'Pressure', type: 'number' }, { key: 'reason', label: 'Repair / reason' }, { key: 'repaired_by', label: 'Checked / repaired by' }, { key: 'reminder_date', label: 'Next measurement reminder', type: 'date' }, { key: 'status', label: 'Status', options: ['Checked', 'Needs Repair', 'Repaired', 'Replace', 'Scrap'] }
+        ], { measurement_date: today(), status: 'Checked' })}</section>
+        <section className="card"><h2>Tyre order / quote</h2>{renderModuleForm('tyre-order', 'tyre_orders', [
+          { key: 'fleet_no', label: 'Fleet number' }, { key: 'requested_by', label: 'Requested by' }, { key: 'tyre_type', label: 'Tyre type' }, { key: 'size', label: 'Size' }, { key: 'qty', label: 'Qty', type: 'number' }, { key: 'reason', label: 'Reason' }, { key: 'status', label: 'Status', options: ['Requested', 'Quote Required', 'Awaiting Funding', 'Funded', 'Ordered', 'Delivered'] }, { key: 'eta', label: 'ETA', type: 'date' }
+        ], { qty: 1, status: 'Requested' })}</section>
+        <section className="card"><h2>Machine tyre history</h2>{renderMachineLookup('Tyres')}</section>
+      </div>
+      <section className="card"><h2>Tyre register</h2><ExcelButton table="tyres" /><MiniTable rows={data.tyres} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'position', label: 'Position' }, { key: 'serial_no', label: 'Serial' }, { key: 'make', label: 'Make' }, { key: 'size', label: 'Size' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section>
+      <section className="card"><h2>Tyre photos</h2><PhotoGallery linkedType="Tyres" /></section>
+    </div>
+  }
+
+  function renderBatteriesPage() {
+    return <div>
+      <PageTitle title="Batteries" subtitle="Battery register, stock, requests, maintenance reminders and fitment photos." right={<><ExcelButton table="batteries" /><PhotoUploadBox linkedType="Batteries" /></>} />
+      <div className="grid-2">
+        <section className="card"><h2>Fit / register battery</h2>{renderModuleForm('battery-register', 'batteries', [
+          { key: 'fleet_no', label: 'Fleet number' }, { key: 'make', label: 'Battery make' }, { key: 'serial_no', label: 'Serial number' }, { key: 'production_date', label: 'Production date', type: 'date' }, { key: 'fitment_date', label: 'Date fitted', type: 'date' }, { key: 'fitted_by', label: 'Fitted by' }, { key: 'volts', label: 'Charging system voltage' }, { key: 'hours_at_fitment', label: 'Hours / mileage fitted', type: 'number' }, { key: 'maintenance_due', label: 'Maintenance reminder', type: 'date' }, { key: 'status', label: 'Status', options: ['Fitted', 'In stock', 'Removed', 'Charging', 'Faulty', 'Scrap'] }
+        ], { fitment_date: today(), status: 'Fitted' })}</section>
+        <section className="card"><h2>Battery stock / order request</h2>{renderModuleForm('battery-order', 'battery_orders', [
+          { key: 'fleet_no', label: 'Fleet number' }, { key: 'requested_by', label: 'Requested by' }, { key: 'battery_type', label: 'Battery type' }, { key: 'volts', label: 'Voltage' }, { key: 'qty', label: 'Qty', type: 'number' }, { key: 'reason', label: 'Reason' }, { key: 'status', label: 'Status', options: ['Requested', 'Awaiting Funding', 'Funded', 'Ordered', 'Delivered', 'In stock'] }, { key: 'eta', label: 'ETA', type: 'date' }
+        ], { qty: 1, status: 'Requested' })}</section>
+      </div>
+      <section className="card"><h2>Battery register</h2><ExcelButton table="batteries" /><MiniTable rows={data.batteries} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'serial_no', label: 'Serial' }, { key: 'make', label: 'Make' }, { key: 'volts', label: 'Volts' }, { key: 'fitment_date', label: 'Fitted' }, { key: 'maintenance_due', label: 'Maintenance' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section>
+      <section className="card"><h2>Battery photos</h2><PhotoGallery linkedType="Batteries" /></section>
+    </div>
+  }
+
+  function renderHosesPage() {
+    return <div>
+      <PageTitle title="Hoses" subtitle="Hose stock, fittings, bulk requests, individual hose repairs and offsite approval." right={<><ExcelButton table="hoses" /><PhotoUploadBox linkedType="Hoses" /></>} />
+      <div className="grid-2">
+        <section className="card"><h2>Hose stock entry</h2>{renderModuleForm('hose-stock', 'hoses', [
+          { key: 'hose_no', label: 'Hose number' }, { key: 'hose_type', label: 'Hose type' }, { key: 'size', label: 'Size' }, { key: 'fitting_a', label: 'Fitting A' }, { key: 'fitting_b', label: 'Fitting B' }, { key: 'stock_qty', label: 'Stock qty', type: 'number' }, { key: 'min_qty', label: 'Minimum qty', type: 'number' }, { key: 'status', label: 'Status', options: ['In stock', 'Low stock', 'Out of stock', 'Ordered'] }
+        ], { stock_qty: 0, min_qty: 1, status: 'In stock' })}</section>
+        <section className="card"><h2>Hose request / repair</h2>{renderModuleForm('hose-request', 'hose_requests', [
+          { key: 'fleet_no', label: 'Fleet number' }, { key: 'request_type', label: 'Request type', options: ['Bulk Hose Request', 'Machine Hose Repair', 'Offsite Repair'] }, { key: 'hose_type', label: 'Hose type' }, { key: 'hose_no', label: 'Hose number' }, { key: 'qty', label: 'Qty', type: 'number' }, { key: 'requested_by', label: 'Requested by' }, { key: 'repair_reason', label: 'Reason / failure' }, { key: 'admin_approval', label: 'Admin approval', options: ['Pending Approval', 'Approved', 'Rejected'] }, { key: 'status', label: 'Status', options: ['Requested', 'Awaiting Approval', 'Approved', 'Offsite', 'Completed'] }
+        ], { qty: 1, request_type: 'Machine Hose Repair', status: 'Requested', admin_approval: 'Pending Approval' })}</section>
+      </div>
+      <div className="grid-2"><section className="card"><h2>Hose Stock</h2><ExcelButton table="hoses" /><MiniTable rows={data.hoses} columns={[{ key: 'hose_no', label: 'Hose No' }, { key: 'hose_type', label: 'Type' }, { key: 'size', label: 'Size' }, { key: 'stock_qty', label: 'Stock' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Hose Requests</h2><ExcelButton table="hose_requests" /><MiniTable rows={data.hose_requests} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'request_type', label: 'Type' }, { key: 'hose_type', label: 'Hose' }, { key: 'requested_by', label: 'Requested By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div>
+      <section className="card"><h2>Hose photos</h2><PhotoGallery linkedType="Hoses" /></section>
+    </div>
+  }
+
+  function renderToolsPage() {
+    return <div>
+      <PageTitle title="Tools" subtitle="Inventory, orders and employee issued tools." right={<><ExcelButton table="tools" /><PhotoUploadBox linkedType="Tools" /></>} />
+      <div className="grid-2">
+        <section className="card"><h2>Add / update tool stock</h2>{renderModuleForm('tools-stock', 'tools', [
+          { key: 'tool_name', label: 'Tool name' }, { key: 'brand', label: 'Brand' }, { key: 'serial_no', label: 'Serial no' }, { key: 'category', label: 'Category' }, { key: 'stock_qty', label: 'Quantity', type: 'number' }, { key: 'condition', label: 'Condition', options: ['New', 'Good', 'Needs Repair', 'Damaged', 'Scrap'] }, { key: 'status', label: 'Status', options: ['In stock', 'Issued', 'Ordered', 'Repair'] }
+        ], { stock_qty: 1, condition: 'Good', status: 'In stock' })}</section>
+        <section className="card"><h2>Issue tool to employee</h2>{renderModuleForm('employee-tool', 'employee_tools', [
+          { key: 'employee_name', label: 'Employee name' }, { key: 'employee_no', label: 'Employee no' }, { key: 'tool_name', label: 'Tool name' }, { key: 'serial_no', label: 'Serial no' }, { key: 'issue_date', label: 'Issue date', type: 'date' }, { key: 'issued_by', label: 'Issued by' }, { key: 'return_date', label: 'Return date', type: 'date' }, { key: 'status', label: 'Status', options: ['Issued', 'Returned', 'Lost', 'Damaged'] }
+        ], { issue_date: today(), status: 'Issued' })}</section>
+        <section className="card"><h2>Tool order request</h2>{renderModuleForm('tool-order', 'tool_orders', [
+          { key: 'tool_name', label: 'Tool name' }, { key: 'brand', label: 'Brand' }, { key: 'qty', label: 'Qty', type: 'number' }, { key: 'requested_by', label: 'Requested by' }, { key: 'reason', label: 'Reason' }, { key: 'status', label: 'Status', options: ['Requested', 'Awaiting Funding', 'Funded', 'Ordered', 'Delivered'] }, { key: 'eta', label: 'ETA', type: 'date' }
+        ], { qty: 1, status: 'Requested' })}</section>
+      </div>
+      <div className="grid-2"><section className="card"><h2>Tools Inventory</h2><ExcelButton table="tools" /><MiniTable rows={data.tools} columns={[{ key: 'tool_name', label: 'Tool' }, { key: 'brand', label: 'Brand' }, { key: 'serial_no', label: 'Serial' }, { key: 'stock_qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Employee Issued Tools</h2><ExcelButton table="employee_tools" /><MiniTable rows={data.employee_tools} columns={[{ key: 'employee_name', label: 'Employee' }, { key: 'tool_name', label: 'Tool' }, { key: 'issue_date', label: 'Issued' }, { key: 'issued_by', label: 'Issued By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div>
+      <section className="card"><h2>Tool photos</h2><PhotoGallery linkedType="Tools" /></section>
+    </div>
+  }
+
+  function renderFabricationPage() {
+    return <div>
+      <PageTitle title="Boiler Shop / Panel Beaters" subtitle="Stock, material requests, projects and material booked to machines." right={<><ExcelButton table="fabrication_stock" /><PhotoUploadBox linkedType="Boiler/Panel" /></>} />
+      <div className="grid-2">
+        <section className="card"><h2>Material stock</h2>{renderModuleForm('fab-stock', 'fabrication_stock', [
+          { key: 'department', label: 'Department', options: ['Boiler Shop', 'Panel Beating', 'Welding', 'Fabrication'] }, { key: 'material_type', label: 'Material type' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock qty', type: 'number' }, { key: 'min_qty', label: 'Minimum qty', type: 'number' }, { key: 'unit', label: 'Unit' }, { key: 'status', label: 'Status', options: ['In stock', 'Low stock', 'Out of stock', 'Ordered'] }
+        ], { department: 'Boiler Shop', stock_qty: 0, min_qty: 1, status: 'In stock' })}</section>
+        <section className="card"><h2>Request material / parts</h2>{renderModuleForm('fab-request', 'fabrication_requests', [
+          { key: 'fleet_no', label: 'Fleet number' }, { key: 'department', label: 'Department', options: ['Boiler Shop', 'Panel Beating', 'Welding', 'Fabrication'] }, { key: 'requested_by', label: 'Requested by' }, { key: 'material_type', label: 'Material type' }, { key: 'description', label: 'Description' }, { key: 'qty', label: 'Qty', type: 'number' }, { key: 'status', label: 'Status', options: ['Requested', 'Awaiting Funding', 'Funded', 'Issued', 'Completed'] }
+        ], { qty: 1, status: 'Requested' })}</section>
+        <section className="card"><h2>Major project</h2>{renderModuleForm('fab-project', 'fabrication_projects', [
+          { key: 'project_name', label: 'Project name' }, { key: 'fleet_no', label: 'Fleet number' }, { key: 'supervisor', label: 'Supervisor' }, { key: 'material_used', label: 'Material used' }, { key: 'progress_percent', label: 'Progress %', type: 'number' }, { key: 'target_date', label: 'Target date', type: 'date' }, { key: 'status', label: 'Status', options: ['Open', 'In progress', 'Awaiting Material', 'Completed'] }
+        ], { progress_percent: 0, status: 'Open' })}</section>
+      </div>
+      <div className="grid-2"><section className="card"><h2>Material Stock</h2><ExcelButton table="fabrication_stock" /><MiniTable rows={data.fabrication_stock} columns={[{ key: 'department', label: 'Department' }, { key: 'material_type', label: 'Material' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Major Projects</h2><ExcelButton table="fabrication_projects" /><MiniTable rows={data.fabrication_projects} columns={[{ key: 'project_name', label: 'Project' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'supervisor', label: 'Supervisor' }, { key: 'progress_percent', label: 'Progress %' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div>
+      <section className="card"><h2>Boiler/Panel photos</h2><PhotoGallery linkedType="Boiler/Panel" /></section>
+    </div>
+  }
+
   function renderServices() {
-    const due = data.services.filter((r) => ['due', 'overdue'].includes(String(r.status || '').toLowerCase()))
-    const dueSoon = data.services.filter((r) => String(r.status || '').toLowerCase() === 'due soon')
-    const upcoming = data.services.filter((r) => String(r.status || '').toLowerCase() === 'upcoming')
-    const scheduled = data.services.filter((r) => String(r.status || '').toLowerCase() === 'scheduled')
+    const activeServices = latestServiceRows(data.services)
+    const due = sortedByHoursLeft(activeServices.filter((r) => ['due', 'overdue'].includes(String(r.status || '').toLowerCase())))
+    const dueSoon = sortedByHoursLeft(activeServices.filter((r) => String(r.status || '').toLowerCase() === 'due soon'))
+    const upcoming = sortedByHoursLeft(activeServices.filter((r) => String(r.status || '').toLowerCase() === 'upcoming'))
+    const scheduled = sortedByHoursLeft(activeServices.filter((r) => String(r.status || '').toLowerCase() === 'scheduled'))
     const columns = [
       { key: 'fleet_no', label: 'Fleet' },
       { key: 'machine_type', label: 'Type' },
@@ -1301,11 +1538,32 @@ export default function Home() {
     ]
     return (
       <div>
-        <PageTitle title="Services" subtitle="Service sheet now separates Due, Due Soon, Upcoming and Scheduled instead of marking every machine due." right={<><ExcelButton table="services" /><PhotoUploadBox linkedType="Services" /></>} />
-        <div className="stats"><StatCard title="Due Now" value={due.length} detail="0 hours or overdue" tone="brown" /><StatCard title="Due Soon" value={dueSoon.length} detail="≤ 50 hours or 95%" tone="purple" /><StatCard title="Upcoming" value={upcoming.length} detail="≤ 250 hours or 85%" tone="indigo" /><StatCard title="Scheduled" value={scheduled.length} detail="Not due" tone="green" /></div>
+        <PageTitle title="Services" subtitle="Latest uploaded service sheet only. Due Now is true due/overdue only, not every machine." right={<><ExcelButton table="services" /><PhotoUploadBox linkedType="Services" /></>} />
+        <div className="stats">
+          <StatCard title="Due Now" value={due.length} detail="0 hours or overdue" tone="brown" />
+          <StatCard title="Due Soon" value={dueSoon.length} detail="≤ 50 hours" tone="purple" />
+          <StatCard title="Upcoming" value={upcoming.length} detail="≤ 250 hours" tone="indigo" />
+          <StatCard title="Scheduled" value={scheduled.length} detail="Not due" tone="green" />
+        </div>
+        <section className="card"><h2>Search machine service history</h2>{renderMachineLookup('services')}</section>
+        <section className="card"><h2>Quick service entry / reminder</h2>
+          {renderModuleForm('service-entry', 'services', [
+            { key: 'fleet_no', label: 'Fleet number' },
+            { key: 'service_type', label: 'Service type', options: ['A Service', 'B Service', 'C Service', '250hr Service', '500hr Service', '1000hr Service', 'Repair Service'] },
+            { key: 'current_hours', label: 'Current hours', type: 'number' },
+            { key: 'last_service_hours', label: 'Last service hours', type: 'number' },
+            { key: 'service_interval', label: 'Service interval', type: 'number' },
+            { key: 'supervisor', label: 'Supervisor' },
+            { key: 'job_card_no', label: 'Job card no' },
+            { key: 'due_date', label: 'Reminder date', type: 'date' },
+            { key: 'status', label: 'Status', options: ['Scheduled', 'Upcoming', 'Due Soon', 'Due', 'Completed'] },
+            { key: 'notes', label: 'Notes' }
+          ], { status: 'Scheduled', service_interval: 250 })}
+        </section>
         <section className="card"><h2>Due / overdue service</h2><MiniTable rows={due} empty="No services due now." columns={columns} /></section>
         <section className="card"><h2>Due soon</h2><MiniTable rows={dueSoon} empty="No services due soon." columns={columns} /></section>
-        <section className="card"><h2>All imported service sheet records</h2><MiniTable rows={data.services} columns={columns} /></section>
+        <section className="card"><h2>Upcoming</h2><MiniTable rows={upcoming} empty="No upcoming services." columns={columns} /></section>
+        <section className="card"><h2>All records from latest service sheet</h2><MiniTable rows={activeServices} columns={columns} /></section>
         <section className="card"><h2>Service photos</h2><PhotoGallery linkedType="Services" /></section>
       </div>
     )
@@ -1361,19 +1619,17 @@ export default function Home() {
 
     if (tab === 'breakdowns') return renderGenericPage('Breakdowns', 'Breakdown reports, faults, spares ETA and assigned fitters.', 'breakdowns', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'spare_eta', label: 'Spares ETA' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
     if (tab === 'repairs') return renderGenericPage('Repairs / Job Cards', 'Repairs, job cards, parts used and fitters.', 'repairs', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'job_card_no', label: 'Job Card' }, { key: 'fault', label: 'Fault' }, { key: 'assigned_to', label: 'Assigned' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
-    if (tab === 'tyres') return renderGenericPage('Tyres', 'Tyre make, serial number, company number, fitment, measurements and ordering.', 'tyres', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'serial_no', label: 'Serial' }, { key: 'make', label: 'Make' }, { key: 'position', label: 'Position' }, { key: 'size', label: 'Size' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
-    if (tab === 'batteries') return renderGenericPage('Batteries', 'Battery make, serial number, date fitted, fleet, charging voltage and maintenance reminders.', 'batteries', [{ key: 'fleet_no', label: 'Fleet' }, { key: 'serial_no', label: 'Serial' }, { key: 'make', label: 'Make' }, { key: 'volts', label: 'Volts' }, { key: 'fitment_date', label: 'Fitted' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }])
+    if (tab === 'tyres') return renderTyresPage()
+    if (tab === 'batteries') return renderBatteriesPage()
     if (tab === 'operations') return renderGenericPage('Operations / Operators', 'Operators by machine type, history, score sheets, offences and damages.', 'operations', [{ key: 'operator_name', label: 'Operator' }, { key: 'machine_type', label: 'Machine Type' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'score', label: 'Score' }, { key: 'offence', label: 'Offence' }, { key: 'supervisor', label: 'Supervisor' }])
 
-    if (tab === 'spares') {
-      return <div><PageTitle title="Spares & Orders" subtitle="Stock, requests, awaiting funding, local/international orders and delivery ETA." right={<><ExcelButton table="spares" /><PhotoUploadBox linkedType="Spares & Orders" /></>} /><div className="stats">{orderStages.map((stage) => <StatCard key={stage} title={stage} value={data.spares_orders.filter((r) => String(r.workflow_stage || r.status) === stage).length} detail="Spares orders" />)}</div><div className="grid-2"><section className="card"><h2>Spares Stock</h2><ExcelButton table="spares" /><MiniTable rows={data.spares} columns={[{ key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'min_qty', label: 'Min' }, { key: 'order_status', label: 'Status', render: (r) => <Badge value={r.order_status} /> }]} /></section><section className="card"><h2>Spares Orders</h2><ExcelButton table="spares_orders" /><MiniTable rows={data.spares_orders} columns={[{ key: 'machine_fleet_no', label: 'Fleet' }, { key: 'part_no', label: 'Part No' }, { key: 'description', label: 'Description' }, { key: 'qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div><section className="card"><h2>Spares photos</h2><PhotoGallery linkedType="Spares & Orders" /></section></div>
-    }
+    if (tab === 'spares') return renderSparesPage()
 
-    if (tab === 'hoses') return <div><PageTitle title="Hoses" subtitle="Hose stock, fittings, bulk requests, individual hose repairs and offsite approval." right={<><ExcelButton table="hoses" /><PhotoUploadBox linkedType="Hoses" /></>} /><div className="grid-2"><section className="card"><h2>Hose Stock</h2><ExcelButton table="hoses" /><MiniTable rows={data.hoses} columns={[{ key: 'hose_no', label: 'Hose No' }, { key: 'hose_type', label: 'Type' }, { key: 'size', label: 'Size' }, { key: 'stock_qty', label: 'Stock' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Hose Requests</h2><ExcelButton table="hose_requests" /><MiniTable rows={data.hose_requests} columns={[{ key: 'fleet_no', label: 'Fleet' }, { key: 'hose_type', label: 'Type' }, { key: 'requested_by', label: 'Requested By' }, { key: 'qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div><section className="card"><h2>Hose photos</h2><PhotoGallery linkedType="Hoses" /></section></div>
+    if (tab === 'hoses') return renderHosesPage()
 
-    if (tab === 'tools') return <div><PageTitle title="Tools" subtitle="Inventory, orders and employee issued tools." right={<><ExcelButton table="tools" /><PhotoUploadBox linkedType="Tools" /></>} /><div className="grid-2"><section className="card"><h2>Tools Inventory</h2><ExcelButton table="tools" /><MiniTable rows={data.tools} columns={[{ key: 'tool_name', label: 'Tool' }, { key: 'brand', label: 'Brand' }, { key: 'serial_no', label: 'Serial' }, { key: 'stock_qty', label: 'Qty' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Employee Issued Tools</h2><ExcelButton table="employee_tools" /><MiniTable rows={data.employee_tools} columns={[{ key: 'employee_name', label: 'Employee' }, { key: 'tool_name', label: 'Tool' }, { key: 'issue_date', label: 'Issued' }, { key: 'issued_by', label: 'Issued By' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div><section className="card"><h2>Tool photos</h2><PhotoGallery linkedType="Tools" /></section></div>
+    if (tab === 'tools') return renderToolsPage()
 
-    if (tab === 'fabrication') return <div><PageTitle title="Boiler Shop / Panel Beaters" subtitle="Stock, material requests, projects and material booked to machines." right={<><ExcelButton table="fabrication_stock" /><PhotoUploadBox linkedType="Boiler/Panel" /></>} /><div className="grid-2"><section className="card"><h2>Material Stock</h2><ExcelButton table="fabrication_stock" /><MiniTable rows={data.fabrication_stock} columns={[{ key: 'department', label: 'Department' }, { key: 'material_type', label: 'Material' }, { key: 'description', label: 'Description' }, { key: 'stock_qty', label: 'Stock' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section><section className="card"><h2>Major Projects</h2><ExcelButton table="fabrication_projects" /><MiniTable rows={data.fabrication_projects} columns={[{ key: 'project_name', label: 'Project' }, { key: 'fleet_no', label: 'Fleet' }, { key: 'supervisor', label: 'Supervisor' }, { key: 'progress_percent', label: 'Progress %' }, { key: 'status', label: 'Status', render: (r) => <Badge value={r.status} /> }]} /></section></div><section className="card"><h2>Boiler/Panel photos</h2><PhotoGallery linkedType="Boiler/Panel" /></section></div>
+    if (tab === 'fabrication') return renderFabricationPage()
 
     if (tab === 'admin') return <div><PageTitle title="Admin" subtitle="Sync, local storage and system controls." /><section className="card"><div className="button-row"><button className="primary" onClick={loadAll}>Sync from Supabase</button><button onClick={() => window.print()}>Print</button><button onClick={() => { localStorage.removeItem(SNAPSHOT_KEY); setData(emptyData); setMessage('Local snapshot cleared.') }}>Clear local snapshot</button></div><div className="meta-grid"><div><span>Connection</span><b>{online ? 'Online' : 'Offline'}</b></div><div><span>Supabase</span><b>{isSupabaseConfigured ? 'Configured' : 'Not configured'}</b></div><div><span>User</span><b>{session?.username}</b></div><div><span>Role</span><b>{session?.role}</b></div></div></section></div>
 
@@ -1467,6 +1723,30 @@ const baseStyles = `
   .photo-card { border: 1px solid var(--line); background: rgba(255,255,255,.06); border-radius: 16px; padding: 10px; display: grid; gap: 8px; }
   .photo-card img, .photo-placeholder { width: 100%; height: 120px; object-fit: cover; border-radius: 12px; background: rgba(0,0,0,.28); display: grid; place-items: center; color: var(--muted); }
   .photo-card small { color: var(--muted); }
+
+  .machine-lookup {
+    display: grid;
+    gap: 14px;
+  }
+
+  .machine-results button {
+    padding: 8px 11px;
+    border-radius: 999px;
+    color: var(--blue);
+    background: rgba(159,230,255,.12);
+  }
+
+  .mini-panel {
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 14px;
+  }
+
+  .mini-panel h3 {
+    margin: 0 0 10px;
+  }
+
   @media (max-width: 1000px) { .app-shell { grid-template-columns: 1fr; } .sidebar { position: relative; height: auto; } nav { grid-template-columns: repeat(2, minmax(0, 1fr)); } .topbar, .page-title { align-items: flex-start; flex-direction: column; } .stats, .grid-2, .form-grid, .import-layout, .meta-grid { grid-template-columns: 1fr; } .main-area { padding: 12px; } }
 `
 
