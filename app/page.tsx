@@ -1339,7 +1339,7 @@ export default function Home() {
         </div>
         <div className="button-row">
           <button className="primary" onClick={() => {
-            const payload = { ...defaults, ...form, id: form.id || uid(), request_date: form.request_date || today(), created_at: nowIso() }
+            const payload: Row = { ...defaults, ...form, id: form.id || uid(), request_date: form.request_date || today(), created_at: nowIso() }
             if (table === 'services') {
               const current = num(payload.current_hours, 0)
               const last = num(payload.last_service_hours, 0)
