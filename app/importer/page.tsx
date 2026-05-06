@@ -5,7 +5,6 @@ import * as XLSX from 'xlsx'
 import { isSupabaseConfigured, supabase } from '@/lib/supabase'
 
 type Row = Record<string, any>
-type FieldType = 'text' | 'number' | 'date'
 
 type TableName =
   | 'fleet_machines'
@@ -32,499 +31,69 @@ type TableName =
   | 'fabrication_projects'
   | 'photo_logs'
 
-type FieldDef = {
-  key: string
-  aliases: string[]
-  type?: FieldType
-  fallback?: any
-}
-
-type ImportConfig = {
+type Register = {
   table: TableName
   label: string
   description: string
-  qualityKeys: string[]
-  fields: FieldDef[]
 }
 
-type ParsedWorkbook = {
-  rows: Row[]
-  headings: string[]
-  matrix: { sheetName: string; rowIndex: number; cells: any[] }[]
-}
-
-function f(key: string, aliases: string[], type: FieldType = 'text', fallback: any = ''): FieldDef {
-  return { key, aliases, type, fallback }
-}
-
-const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
-const today = () => new Date().toISOString().slice(0, 10)
-
-const IMPORTS: ImportConfig[] = [
-  {
-    table: 'fleet_machines',
-    label: 'Fleet Register',
-    description: 'Machines, fleet numbers, hours, mileage, department and status.',
-    qualityKeys: ['fleet_no'],
-    fields: [
-      f('fleet_no', ['fleet', 'fleet no', 'fleet number', 'machine', 'machine no', 'unit', 'unit no', 'equipment', 'equipment no', 'plant no']),
-      f('machine_type', ['machine type', 'type', 'equipment type', 'fleet type']),
-      f('make_model', ['make model', 'model', 'make', 'description']),
-      f('reg_no', ['reg', 'registration', 'reg no']),
-      f('department', ['department', 'dept', 'section', 'area'], 'text', 'Workshop'),
-      f('location', ['location', 'site']),
-      f('hours', ['hours', 'hrs', 'hm', 'hour meter', 'meter reading'], 'number', 0),
-      f('mileage', ['mileage', 'km', 'odometer'], 'number', 0),
-      f('status', ['status', 'state'], 'text', 'Available'),
-      f('notes', ['notes', 'remarks'])
-    ]
-  },
-  {
-    table: 'personnel',
-    label: 'Personnel Register',
-    description: 'Employees, shifts, trades, sections, leave balances and status.',
-    qualityKeys: ['name', 'employee_no'],
-    fields: [
-      f('employee_no', ['code', 'employee code', 'employee no', 'emp no', 'clock no', 'staff no']),
-      f('name', ['name', 'employee name', 'full name', 'employee']),
-      f('shift', ['shift'], 'text', 'Shift 1'),
-      f('section', ['department', 'dept', 'section'], 'text', 'Workshop'),
-      f('role', ['occupation', 'current job title', 'job title', 'trade', 'role', 'position'], 'text', 'Workshop Employee'),
-      f('staff_group', ['staff group', 'group'], 'text', 'Workshop Staff'),
-      f('phone', ['phone', 'cell', 'mobile']),
-      f('employment_status', ['employment status', 'status'], 'text', 'Active'),
-      f('leave_balance_days', ['leave balance', 'leave days', 'days leave'], 'number', 30),
-      f('leave_taken_days', ['leave taken', 'days taken'], 'number', 0),
-      f('notes', ['notes', 'remarks'])
-    ]
-  },
-  {
-    table: 'leave_records',
-    label: 'Leave / Off Schedule',
-    description: 'Current, upcoming and past leave records.',
-    qualityKeys: ['person_name', 'employee_no'],
-    fields: [
-      f('employee_no', ['code', 'employee code', 'employee no', 'emp no', 'clock no']),
-      f('person_name', ['name', 'employee name', 'full name', 'person name', 'employee']),
-      f('shift', ['shift'], 'text', 'Shift 1'),
-      f('section', ['department', 'dept', 'section']),
-      f('role', ['occupation', 'current job title', 'job title', 'trade', 'role']),
-      f('leave_type', ['leave type', 'type'], 'text', 'Annual Leave'),
-      f('start_date', ['start date', 'leave start', 'from'], 'date'),
-      f('end_date', ['end date', 'leave end', 'to'], 'date'),
-      f('days', ['total', 'days', 'total days', 'leave days'], 'number', 0),
-      f('reason', ['reason']),
-      f('status', ['status'], 'text', 'Approved')
-    ]
-  },
-  {
-    table: 'services',
-    label: 'Service Schedule',
-    description: 'Services, service history, job cards and supervisors.',
-    qualityKeys: ['fleet_no', 'service_type'],
-    fields: [
-      f('fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
-      f('service_type', ['service type', 'service', 'type'], 'text', 'Service'),
-      f('due_date', ['due date', 'service due date', 'date'], 'date'),
-      f('scheduled_hours', ['scheduled hours', 'due hours', 'hours', 'hm'], 'number', 0),
-      f('completed_date', ['completed date', 'date completed', 'done date'], 'date'),
-      f('completed_hours', ['completed hours', 'done hours'], 'number', 0),
-      f('job_card_no', ['job card', 'job card no']),
-      f('supervisor', ['supervisor', 'foreman']),
-      f('technician', ['technician', 'fitter', 'mechanic']),
-      f('status', ['status'], 'text', 'Due'),
-      f('notes', ['notes', 'remarks'])
-    ]
-  },
-  {
-    table: 'breakdowns',
-    label: 'Breakdowns',
-    description: 'Breakdown records, faults, ETAs and assigned fitters.',
-    qualityKeys: ['fleet_no', 'fault'],
-    fields: [
-      f('fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
-      f('category', ['category', 'area', 'section', 'department'], 'text', 'Mechanical'),
-      f('fault', ['fault', 'breakdown', 'defect', 'problem', 'description']),
-      f('reported_by', ['reported by', 'requester', 'raised by', 'operator']),
-      f('assigned_to', ['assigned to', 'worked by', 'fitter', 'mechanic', 'technician']),
-      f('start_time', ['start time', 'start date', 'date reported', 'date']),
-      f('status', ['status'], 'text', 'Open'),
-      f('spare_eta', ['spares eta', 'spare eta', 'eta'], 'date'),
-      f('expected_available_date', ['expected available', 'available date', 'return date'], 'date'),
-      f('cause', ['cause', 'root cause']),
-      f('action_taken', ['action taken', 'repair done', 'work done']),
-      f('preventative_recommendation', ['preventative', 'recommendation', 'preventative maintenance']),
-      f('notes', ['notes', 'remarks'])
-    ]
-  },
-  {
-    table: 'repairs',
-    label: 'Repairs / Job Cards',
-    description: 'Repairs, job cards, parts used and fitters.',
-    qualityKeys: ['fleet_no', 'fault', 'job_card_no'],
-    fields: [
-      f('fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
-      f('job_card_no', ['job card', 'job card no', 'jc no', 'job no']),
-      f('fault', ['fault', 'problem', 'defect', 'description']),
-      f('assigned_to', ['assigned to', 'worked by', 'fitter', 'mechanic', 'technician']),
-      f('start_time', ['start time', 'start date', 'date']),
-      f('end_time', ['end time', 'end date', 'completed date']),
-      f('status', ['status'], 'text', 'In progress'),
-      f('parts_used', ['parts used', 'spares used', 'parts']),
-      f('notes', ['notes', 'remarks'])
-    ]
-  },
-  {
-    table: 'spares',
-    label: 'Spares Stock',
-    description: 'Part numbers, stock quantities, suppliers and shelves.',
-    qualityKeys: ['part_no', 'description'],
-    fields: [
-      f('part_no', ['part no', 'part number', 'spare no', 'stock code', 'item no']),
-      f('description', ['description', 'item', 'spare', 'part name']),
-      f('section', ['section', 'department'], 'text', 'Stores'),
-      f('machine_group', ['machine group', 'group'], 'text', 'Yellow Machine'),
-      f('machine_type', ['machine type', 'type']),
-      f('stock_qty', ['stock qty', 'qty', 'quantity', 'stock', 'balance'], 'number', 0),
-      f('min_qty', ['min qty', 'minimum', 'minimum stock', 'reorder level'], 'number', 1),
-      f('supplier', ['supplier', 'vendor']),
-      f('shelf_location', ['shelf', 'bin', 'location']),
-      f('lead_time_days', ['lead time', 'lead time days'], 'number', 0),
-      f('order_status', ['order status', 'status'], 'text', 'In stock')
-    ]
-  },
-  {
-    table: 'spares_orders',
-    label: 'Spares Orders',
-    description: 'Requests, awaiting funding, funded, local/international and ETA.',
-    qualityKeys: ['machine_fleet_no', 'part_no', 'description', 'spares_items'],
-    fields: [
-      f('request_date', ['request date', 'date'], 'date'),
-      f('machine_fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
-      f('machine_group', ['machine group', 'group'], 'text', 'Yellow Machine'),
-      f('workshop_section', ['workshop section', 'section', 'department'], 'text', 'Mechanical'),
-      f('requested_by', ['requested by', 'requester', 'foreman', 'raised by']),
-      f('part_no', ['part no', 'part number', 'spare no', 'stock code']),
-      f('description', ['description', 'item', 'spare']),
-      f('qty', ['qty', 'quantity', 'number'], 'number', 1),
-      f('spares_items', ['spares items', 'items', 'list']),
-      f('priority', ['priority'], 'text', 'Normal'),
-      f('workflow_stage', ['workflow stage', 'stage', 'status'], 'text', 'Requested'),
-      f('status', ['status', 'stage'], 'text', 'Requested'),
-      f('order_type', ['order type', 'local international', 'local/international'], 'text', 'Not selected'),
-      f('funding_status', ['funding status', 'funding'], 'text', 'Not funded'),
-      f('eta', ['eta', 'delivery date', 'expected date'], 'date'),
-      f('notes', ['notes', 'remarks'])
-    ]
-  },
-  {
-    table: 'tyres',
-    label: 'Tyres Register',
-    description: 'Tyre make, serial, company number, fitment and reminders.',
-    qualityKeys: ['serial_no', 'company_no', 'fleet_no'],
-    fields: [
-      f('make', ['make', 'brand']),
-      f('serial_no', ['serial', 'serial no', 'serial number', 'sn']),
-      f('company_no', ['company no', 'company number']),
-      f('production_date', ['production date', 'date of production'], 'date'),
-      f('fitted_date', ['fitted date', 'date fitted', 'fitment date'], 'date'),
-      f('fleet_no', ['fleet', 'fleet no', 'machine', 'unit']),
-      f('fitted_by', ['fitted by']),
-      f('position', ['position', 'wheel position'], 'text', 'FL'),
-      f('tyre_type', ['tyre type', 'type']),
-      f('size', ['size']),
-      f('fitment_hours', ['fitment hours', 'hours', 'hm'], 'number', 0),
-      f('fitment_mileage', ['fitment mileage', 'mileage', 'km'], 'number', 0),
-      f('current_tread_mm', ['current tread', 'tread', 'tread depth'], 'number', 0),
-      f('measurement_due_date', ['measurement due', 'reminder'], 'date'),
-      f('stock_status', ['stock status'], 'text', 'Fitted'),
-      f('status', ['status'], 'text', 'Fitted'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'tyre_measurements',
-    label: 'Tyre Measurements',
-    description: 'Tread depth, pressure, condition and checks.',
-    qualityKeys: ['tyre_serial_no', 'fleet_no'],
-    fields: [
-      f('tyre_serial_no', ['tyre serial', 'serial no', 'serial']),
-      f('fleet_no', ['fleet', 'fleet no', 'machine']),
-      f('position', ['position']),
-      f('measurement_date', ['measurement date', 'date'], 'date'),
-      f('measured_by', ['measured by', 'checked by']),
-      f('tread_depth_mm', ['tread depth', 'tread'], 'number', 0),
-      f('pressure_psi', ['pressure', 'psi'], 'number', 0),
-      f('condition', ['condition'], 'text', 'Good'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'tyre_orders',
-    label: 'Tyre Orders',
-    description: 'Tyres to quote/order against machines.',
-    qualityKeys: ['fleet_no', 'tyre_type', 'size'],
-    fields: [
-      f('request_date', ['request date', 'date'], 'date'),
-      f('fleet_no', ['fleet', 'fleet no', 'machine']),
-      f('tyre_type', ['tyre type', 'type']),
-      f('size', ['size']),
-      f('qty', ['qty', 'quantity'], 'number', 1),
-      f('requested_by', ['requested by', 'requester', 'foreman']),
-      f('reason', ['reason']),
-      f('priority', ['priority'], 'text', 'Normal'),
-      f('status', ['status'], 'text', 'Requested'),
-      f('eta', ['eta'], 'date'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'batteries',
-    label: 'Battery Register',
-    description: 'Battery make, serial, fleet, voltage and maintenance reminders.',
-    qualityKeys: ['serial_no', 'fleet_no'],
-    fields: [
-      f('make', ['make', 'brand']),
-      f('serial_no', ['serial', 'serial no', 'serial number']),
-      f('production_date', ['production date', 'date of production'], 'date'),
-      f('fitment_date', ['fitment date', 'date fitted', 'fitted date'], 'date'),
-      f('fleet_no', ['fleet', 'fleet no', 'machine']),
-      f('fitted_by', ['fitted by']),
-      f('charging_voltage', ['charging voltage', 'charging system voltage'], 'text', '24V'),
-      f('volts', ['volts', 'voltage'], 'text', '12V'),
-      f('fitment_hours', ['fitment hours', 'hours', 'hm'], 'number', 0),
-      f('fitment_mileage', ['fitment mileage', 'mileage', 'km'], 'number', 0),
-      f('maintenance_due_date', ['maintenance due', 'reminder'], 'date'),
-      f('stock_status', ['stock status'], 'text', 'Fitted'),
-      f('status', ['status'], 'text', 'Fitted'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'battery_orders',
-    label: 'Battery Orders',
-    description: 'Battery orders against machines.',
-    qualityKeys: ['fleet_no', 'battery_type', 'voltage'],
-    fields: [
-      f('request_date', ['request date', 'date'], 'date'),
-      f('fleet_no', ['fleet', 'fleet no', 'machine']),
-      f('battery_type', ['battery type', 'type']),
-      f('voltage', ['voltage', 'volts'], 'text', '12V'),
-      f('qty', ['qty', 'quantity'], 'number', 1),
-      f('requested_by', ['requested by', 'requester', 'foreman']),
-      f('reason', ['reason']),
-      f('priority', ['priority'], 'text', 'Normal'),
-      f('status', ['status'], 'text', 'Requested'),
-      f('eta', ['eta'], 'date'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'operations',
-    label: 'Operations / Operators',
-    description: 'Operator history, scores, offences and damages.',
-    qualityKeys: ['operator_name', 'fleet_no'],
-    fields: [
-      f('operator_name', ['operator name', 'operator', 'name']),
-      f('employee_no', ['employee no', 'clock no', 'code']),
-      f('machine_group', ['machine group', 'group'], 'text', 'Truck'),
-      f('machine_type', ['machine type', 'type'], 'text', 'Truck'),
-      f('fleet_no', ['fleet', 'fleet no', 'machine']),
-      f('shift', ['shift'], 'text', 'Shift 1'),
-      f('score', ['score'], 'number', 100),
-      f('offence', ['offence', 'offense']),
-      f('damage_report', ['damage report', 'damage', 'abuse']),
-      f('supervisor', ['supervisor', 'foreman']),
-      f('event_date', ['event date', 'date'], 'date'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'hoses',
-    label: 'Hose Stock',
-    description: 'Hose and fitting stock.',
-    qualityKeys: ['hose_no', 'hose_type', 'size'],
-    fields: [
-      f('hose_no', ['hose no', 'hose number']),
-      f('hose_type', ['hose type', 'type'], 'text', 'Hydraulic Hose'),
-      f('size', ['size']),
-      f('length', ['length']),
-      f('fitting_a', ['fitting a', 'fitting 1'], 'text', 'Straight'),
-      f('fitting_b', ['fitting b', 'fitting 2'], 'text', 'Straight'),
-      f('stock_qty', ['stock qty', 'qty', 'quantity'], 'number', 0),
-      f('min_qty', ['min qty', 'minimum'], 'number', 1),
-      f('shelf_location', ['shelf', 'location', 'bin']),
-      f('status', ['status'], 'text', 'In stock'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'hose_requests',
-    label: 'Hose Requests',
-    description: 'Bulk hose requests and individual hose repairs.',
-    qualityKeys: ['fleet_no', 'hose_type', 'requested_by'],
-    fields: [
-      f('request_date', ['request date', 'date'], 'date'),
-      f('fleet_no', ['fleet', 'fleet no', 'machine']),
-      f('requested_by', ['requested by', 'requester', 'foreman']),
-      f('hose_type', ['hose type', 'type'], 'text', 'Hydraulic Hose'),
-      f('hose_no', ['hose no']),
-      f('size', ['size']),
-      f('length', ['length']),
-      f('fittings', ['fittings']),
-      f('qty', ['qty', 'quantity'], 'number', 1),
-      f('repair_type', ['repair type'], 'text', 'New hose'),
-      f('offsite_repair', ['offsite repair'], 'text', 'No'),
-      f('admin_approval', ['admin approval', 'approval'], 'text', 'Pending'),
-      f('status', ['status'], 'text', 'Requested'),
-      f('eta', ['eta'], 'date'),
-      f('reason', ['reason']),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'tools',
-    label: 'Tools Inventory',
-    description: 'Workshop tools, quantity, brand and condition.',
-    qualityKeys: ['tool_name', 'serial_no'],
-    fields: [
-      f('tool_name', ['tool name', 'tool']),
-      f('category', ['category'], 'text', 'Hand Tools'),
-      f('brand', ['brand', 'make']),
-      f('model', ['model']),
-      f('serial_no', ['serial no', 'serial']),
-      f('stock_qty', ['stock qty', 'qty', 'quantity'], 'number', 0),
-      f('workshop_section', ['workshop section', 'section'], 'text', 'Mechanical'),
-      f('condition', ['condition'], 'text', 'Good'),
-      f('status', ['status'], 'text', 'In stock'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'tool_orders',
-    label: 'Tool Orders',
-    description: 'Requests to order tools.',
-    qualityKeys: ['tool_name', 'requested_by'],
-    fields: [
-      f('request_date', ['request date', 'date'], 'date'),
-      f('tool_name', ['tool name', 'tool']),
-      f('category', ['category'], 'text', 'Hand Tools'),
-      f('brand', ['brand']),
-      f('qty', ['qty', 'quantity'], 'number', 1),
-      f('requested_by', ['requested by', 'requester']),
-      f('reason', ['reason']),
-      f('priority', ['priority'], 'text', 'Normal'),
-      f('status', ['status'], 'text', 'Requested'),
-      f('eta', ['eta'], 'date'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'employee_tools',
-    label: 'Employee Issued Tools',
-    description: 'Tools issued to employees and return records.',
-    qualityKeys: ['employee_name', 'tool_name'],
-    fields: [
-      f('employee_name', ['employee name', 'employee', 'name']),
-      f('employee_no', ['employee no', 'clock no', 'code']),
-      f('tool_name', ['tool name', 'tool']),
-      f('brand', ['brand']),
-      f('serial_no', ['serial no', 'serial']),
-      f('issue_date', ['issue date', 'date issued'], 'date'),
-      f('issued_by', ['issued by']),
-      f('condition_issued', ['condition issued'], 'text', 'Good'),
-      f('return_date', ['return date'], 'date'),
-      f('condition_returned', ['condition returned']),
-      f('status', ['status'], 'text', 'Issued'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'fabrication_stock',
-    label: 'Boiler/Panel Stock',
-    description: 'Material stock for boiler shop and panel beaters.',
-    qualityKeys: ['description', 'material_type'],
-    fields: [
-      f('department', ['department'], 'text', 'Boiler Shop'),
-      f('material_type', ['material type', 'material'], 'text', 'Steel Plate'),
-      f('description', ['description', 'item']),
-      f('size_spec', ['size spec', 'size']),
-      f('stock_qty', ['stock qty', 'qty', 'quantity'], 'number', 0),
-      f('min_qty', ['min qty', 'minimum'], 'number', 1),
-      f('unit', ['unit'], 'text', 'pcs'),
-      f('supplier', ['supplier']),
-      f('location', ['location']),
-      f('status', ['status'], 'text', 'In stock'),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'fabrication_requests',
-    label: 'Boiler/Panel Requests',
-    description: 'Material requests booked to machines and projects.',
-    qualityKeys: ['description', 'fleet_no', 'project_name'],
-    fields: [
-      f('request_date', ['request date', 'date'], 'date'),
-      f('department', ['department'], 'text', 'Boiler Shop'),
-      f('fleet_no', ['fleet', 'fleet no', 'machine']),
-      f('requested_by', ['requested by', 'requester', 'foreman']),
-      f('material_type', ['material type', 'material']),
-      f('description', ['description', 'item']),
-      f('qty', ['qty', 'quantity'], 'number', 1),
-      f('project_name', ['project name', 'project']),
-      f('status', ['status'], 'text', 'Requested'),
-      f('eta', ['eta'], 'date'),
-      f('reason', ['reason']),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'fabrication_projects',
-    label: 'Boiler/Panel Projects',
-    description: 'Major ongoing boiler shop and panel beating projects.',
-    qualityKeys: ['project_name', 'fleet_no'],
-    fields: [
-      f('department', ['department'], 'text', 'Boiler Shop'),
-      f('project_name', ['project name', 'project']),
-      f('fleet_no', ['fleet', 'fleet no', 'machine']),
-      f('supervisor', ['supervisor', 'foreman']),
-      f('start_date', ['start date'], 'date'),
-      f('target_date', ['target date'], 'date'),
-      f('status', ['status'], 'text', 'Ongoing'),
-      f('material_used', ['material used']),
-      f('progress_percent', ['progress percent', 'progress'], 'number', 0),
-      f('notes', ['notes'])
-    ]
-  },
-  {
-    table: 'photo_logs',
-    label: 'Photo Captions Register',
-    description: 'Excel captions only. Actual photos remain on Photos page.',
-    qualityKeys: ['fleet_no', 'caption'],
-    fields: [
-      f('fleet_no', ['fleet', 'fleet no', 'machine']),
-      f('linked_type', ['linked type', 'type'], 'text', 'Photo'),
-      f('caption', ['caption', 'description']),
-      f('notes', ['notes'])
-    ]
-  }
+const REGISTERS: Register[] = [
+  { table: 'fleet_machines', label: 'Fleet Register', description: 'Machines, fleet numbers, hours, mileage and status.' },
+  { table: 'personnel', label: 'Personnel Register', description: 'Employees, shifts, trades, sections and leave balances.' },
+  { table: 'leave_records', label: 'Leave / Off Schedule', description: 'Current, upcoming and past leave records.' },
+  { table: 'services', label: 'Service Schedule', description: 'Services, job cards and supervisors.' },
+  { table: 'breakdowns', label: 'Breakdowns', description: 'Breakdown records, faults, ETAs and fitters.' },
+  { table: 'repairs', label: 'Repairs / Job Cards', description: 'Repairs, job cards and parts used.' },
+  { table: 'spares', label: 'Spares Stock', description: 'Part numbers, stock, suppliers and shelves.' },
+  { table: 'spares_orders', label: 'Spares Orders', description: 'Requests, funding, delivery and ETA.' },
+  { table: 'tyres', label: 'Tyres Register', description: 'Tyre serials, fitment and reminders.' },
+  { table: 'tyre_measurements', label: 'Tyre Measurements', description: 'Tread depth, pressure and checks.' },
+  { table: 'tyre_orders', label: 'Tyre Orders', description: 'Tyres to quote or order.' },
+  { table: 'batteries', label: 'Battery Register', description: 'Battery serials, fitment and maintenance.' },
+  { table: 'battery_orders', label: 'Battery Orders', description: 'Battery requests against machines.' },
+  { table: 'operations', label: 'Operations / Operators', description: 'Operator history, score and machine abuse records.' },
+  { table: 'hoses', label: 'Hose Stock', description: 'Hose and fitting stock.' },
+  { table: 'hose_requests', label: 'Hose Requests', description: 'Bulk hose requests and hose repairs.' },
+  { table: 'tools', label: 'Tools Inventory', description: 'Workshop tools, quantities, brands and condition.' },
+  { table: 'tool_orders', label: 'Tool Orders', description: 'Tool requests and ordering.' },
+  { table: 'employee_tools', label: 'Employee Issued Tools', description: 'Tools issued to employees.' },
+  { table: 'fabrication_stock', label: 'Boiler/Panel Stock', description: 'Boiler shop and panel beating stock.' },
+  { table: 'fabrication_requests', label: 'Boiler/Panel Requests', description: 'Material requests booked to machines.' },
+  { table: 'fabrication_projects', label: 'Boiler/Panel Projects', description: 'Major ongoing projects.' },
+  { table: 'photo_logs', label: 'Photo Captions', description: 'Photo captions and fleet references.' }
 ]
 
-function normalizeKey(value: any) {
-  return String(value || '').trim().toLowerCase().replace(/[^a-z0-9]+/g, '')
+const today = () => new Date().toISOString().slice(0, 10)
+const uid = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`
+
+function normal(value: any) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
 }
 
 function cleanRow(row: Row) {
   const out: Row = {}
+
   Object.entries(row).forEach(([key, value]) => {
     if (value === undefined || value === null) return
     if (typeof value === 'string' && value.trim() === '') return
     out[key] = value
   })
+
   return out
 }
 
-function parseExcelDateNumber(value: number) {
+function makeSlug(value: any) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function excelDateNumber(value: number) {
   const parsed = XLSX.SSF.parse_date_code(value)
   if (!parsed) return ''
   return `${String(parsed.y).padStart(4, '0')}-${String(parsed.m).padStart(2, '0')}-${String(parsed.d).padStart(2, '0')}`
@@ -533,283 +102,191 @@ function parseExcelDateNumber(value: number) {
 function dateOnly(value: any) {
   if (!value) return ''
 
-  if (value instanceof Date && !Number.isNaN(value.getTime())) return value.toISOString().slice(0, 10)
-  if (typeof value === 'number' && value > 20000) return parseExcelDateNumber(value)
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10)
+  }
+
+  if (typeof value === 'number' && value > 20000) {
+    return excelDateNumber(value)
+  }
 
   const text = String(value).trim()
   if (!text) return ''
 
-  let match = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/)
-  if (match) {
-    const yyyy = match[3].length === 2 ? `20${match[3]}` : match[3]
-    return `${yyyy}-${match[2].padStart(2, '0')}-${match[1].padStart(2, '0')}`
+  let m = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})$/)
+  if (m) {
+    const dd = m[1].padStart(2, '0')
+    const mm = m[2].padStart(2, '0')
+    const yyyy = m[3].length === 2 ? `20${m[3]}` : m[3]
+    return `${yyyy}-${mm}-${dd}`
   }
 
-  match = text.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/)
-  if (match) return `${match[1]}-${match[2].padStart(2, '0')}-${match[3].padStart(2, '0')}`
+  m = text.match(/^(\d{4})[./-](\d{1,2})[./-](\d{1,2})$/)
+  if (m) {
+    return `${m[1]}-${m[2].padStart(2, '0')}-${m[3].padStart(2, '0')}`
+  }
 
-  const parsed = new Date(text)
-  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10)
+  const d = new Date(text)
+  if (!Number.isNaN(d.getTime())) {
+    return d.toISOString().slice(0, 10)
+  }
 
   return ''
+}
+
+function dateRange(value: any) {
+  const text = String(value || '').trim()
+  const matches = text.match(/\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/g) || []
+
+  if (matches.length >= 2) {
+    return [dateOnly(matches[0]), dateOnly(matches[1])]
+  }
+
+  if (matches.length === 1) {
+    return [dateOnly(matches[0]), dateOnly(matches[0])]
+  }
+
+  return ['', '']
 }
 
 function daysInclusive(start: any, end: any) {
   const s = new Date(start)
   const e = new Date(end)
+
   if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return 0
+
   return Math.max(0, Math.floor((e.getTime() - s.getTime()) / 86400000) + 1)
 }
 
-function exactCell(row: Row, aliases: string[]) {
+function getCell(row: Row, aliases: string[]) {
   const keys = Object.keys(row)
+
   for (const alias of aliases) {
-    const found = keys.find((key) => normalizeKey(key) === normalizeKey(alias))
+    const found = keys.find((key) => normal(key) === normal(alias))
     if (found && String(row[found] ?? '').trim() !== '') return row[found]
   }
-  return ''
-}
 
-function fuzzyCell(row: Row, aliases: string[]) {
-  const keys = Object.keys(row)
   for (const alias of aliases) {
-    const wanted = normalizeKey(alias)
+    const wanted = normal(alias)
+
     const found = keys.find((key) => {
-      const actual = normalizeKey(key)
+      const actual = normal(key)
       return actual && wanted && (actual.includes(wanted) || wanted.includes(actual))
     })
+
     if (found && String(row[found] ?? '').trim() !== '') return row[found]
   }
-  return ''
-}
-
-function getCell(row: Row, aliases: string[]) {
-  const expanded = aliases.flatMap((alias) => {
-    const n = normalizeKey(alias)
-    const extra: string[] = []
-
-    if (n.includes('fleet')) extra.push('fleet', 'fleet no', 'fleet number', 'machine', 'machine no', 'unit', 'unit no', 'equipment', 'asset')
-    if (n.includes('employee')) extra.push('employee', 'employee name', 'emp no', 'employee no', 'clock no', 'staff no', 'code', 'name')
-    if (n.includes('request')) extra.push('requested by', 'requester', 'foreman', 'supervisor', 'raised by', 'ordered by')
-    if (n.includes('qty')) extra.push('qty', 'quantity', 'number', 'amount', 'stock', 'stock qty', 'balance')
-    if (n.includes('part')) extra.push('part no', 'part number', 'spare no', 'spare number', 'item no', 'stock code')
-    if (n.includes('serial')) extra.push('serial', 'serial no', 'serial number', 'sn', 's/n')
-    if (n.includes('status')) extra.push('status', 'state', 'stage')
-    if (n.includes('role')) extra.push('role', 'trade', 'position', 'job title', 'occupation', 'current job title')
-    if (n.includes('section')) extra.push('section', 'department', 'dept', 'area')
-    if (n.includes('hours')) extra.push('hours', 'hrs', 'hm', 'hour meter')
-    if (n.includes('date')) extra.push('date', 'dates', 'request date', 'fitted date', 'fitment date', 'production date', 'due date')
-
-    return [alias, ...extra]
-  })
-
-  return exactCell(row, expanded) || fuzzyCell(row, expanded)
-}
-
-function convertValue(raw: Row, field: FieldDef) {
-  const found = getCell(raw, field.aliases)
-  const value = found === '' || found === undefined || found === null ? field.fallback : found
-
-  if (field.type === 'number') {
-    const num = Number(String(value ?? '').replace(/,/g, ''))
-    return Number.isFinite(num) ? num : field.fallback ?? 0
-  }
-
-  if (field.type === 'date') return dateOnly(value)
-
-  return String(value ?? '').trim()
-}
-
-function parseDateRange(value: any) {
-  const text = String(value || '').trim()
-  const matches = text.match(/\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/g) || []
-  if (matches.length >= 2) return [dateOnly(matches[0]), dateOnly(matches[1])]
-  if (matches.length === 1) return [dateOnly(matches[0]), dateOnly(matches[0])]
-  return ['', '']
-}
-
-function fullNameFromRaw(raw: Row) {
-  const firstName = getCell(raw, ['FirstName', 'First Name', 'Forename'])
-  const surname = getCell(raw, ['Surname', 'Last Name'])
-  const normalName = getCell(raw, ['Name', 'Employee Name', 'Full Name'])
-  return `${String(firstName || '').trim()} ${String(surname || '').trim()}`.trim() || String(normalName || '').trim()
-}
-
-function inferMachineType(fleetNo: string, rowText = '') {
-  const text = `${fleetNo} ${rowText}`.toUpperCase()
-  if (text.includes('FEL')) return 'FEL'
-  if (text.includes('EXC') || text.includes('TEX')) return 'Excavator'
-  if (text.includes('ADT') || text.includes('HT') || text.includes('HOWO') || text.includes('TRUCK')) return 'Truck'
-  if (text.includes('DOZER') || text.includes('DZ')) return 'Dozer'
-  if (text.includes('GRADER') || text.includes('GD')) return 'Grader'
-  if (text.includes('ROLLER')) return 'Roller'
-  if (text.includes('TLB')) return 'TLB'
-  if (text.includes('LDV') || text.includes('AFX') || text.includes('AG')) return 'LDV'
-  return 'Machine'
-}
-
-function fleetCandidateFromCells(cells: any[]) {
-  const skipWords = ['DATE', 'TOTAL', 'QTY', 'QUANTITY', 'DESCRIPTION', 'MACHINE', 'FLEET', 'TYPE', 'STATUS', 'DEPARTMENT']
-  const parts = cells.flatMap((cell) => String(cell || '').split(/[\s,;:/|]+/)).map((x) => x.trim()).filter(Boolean)
-
-  for (const part of parts) {
-    const clean = part.toUpperCase().replace(/[^A-Z0-9-]/g, '')
-    if (!clean) continue
-    if (skipWords.includes(clean)) continue
-    if (/^\d{1,2}[.-]\d{1,2}[.-]\d{2,4}$/.test(clean)) continue
-    if (/^[A-Z]{1,5}-?\d{1,5}[A-Z]?$/.test(clean)) return clean.replace(/-/g, '')
-  }
 
   return ''
 }
 
-function polishMappedRow(table: TableName, raw: Row, mapped: Row) {
-  const next = { ...mapped }
-
-  if (table === 'personnel') {
-    const fullName = fullNameFromRaw(raw)
-    if (!next.name && fullName) next.name = fullName
-    if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
-    if (!next.role || next.role === 'Workshop Employee') next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade']) || next.role
-    if (!next.section || next.section === 'Workshop') next.section = getCell(raw, ['Department', 'Dept', 'Section']) || next.section
-
-    next.shift = next.shift || 'Shift 1'
-    next.staff_group = next.staff_group || 'Workshop Staff'
-    next.employment_status = next.employment_status || 'Active'
-    next.id = String(next.employee_no || next.name || uid()).trim()
-  }
-
-  if (table === 'leave_records') {
-    const fullName = fullNameFromRaw(raw)
-    const dates = getCell(raw, ['DATES', 'Dates', 'Date Range', 'Leave Dates'])
-    const [startDate, endDate] = parseDateRange(dates)
-
-    if (!next.person_name && fullName) next.person_name = fullName
-    if (!next.employee_no) next.employee_no = getCell(raw, ['Code', 'Employee Code', 'Clock No', 'Emp No'])
-    if (!next.role) next.role = getCell(raw, ['Occupation', 'Current Job Title', 'Job Title', 'Trade'])
-    if (!next.section) next.section = getCell(raw, ['Department', 'Dept', 'Section'])
-    if (!next.leave_type || next.leave_type === 'Annual Leave') next.leave_type = getCell(raw, ['LEAVE TYPE', 'Leave Type', 'Type']) || 'Annual Leave'
-    if (!next.start_date && startDate) next.start_date = startDate
-    if (!next.end_date && endDate) next.end_date = endDate
-
-    const totalDays = Number(getCell(raw, ['TOTAL', 'Total', 'Days', 'Leave Days']))
-    if (!next.days || Number(next.days) === 0) next.days = Number.isFinite(totalDays) && totalDays > 0 ? totalDays : daysInclusive(next.start_date, next.end_date)
-
-    next.shift = next.shift || 'Shift 1'
-    next.status = next.status || 'Approved'
-    next.id = uid()
-  }
-
-  if (table === 'fleet_machines') {
-    const cells = Array.isArray(raw.__cells) ? raw.__cells : Object.values(raw)
-    const candidate = fleetCandidateFromCells(cells)
-    if (!next.fleet_no && candidate) next.fleet_no = candidate
-    if (!next.machine_type && next.fleet_no) next.machine_type = inferMachineType(next.fleet_no, cells.join(' '))
-    next.department = next.department || 'Workshop'
-    next.status = next.status || 'Available'
-    next.id = String(next.fleet_no || uid()).trim()
-  }
-
-  return cleanRow(next)
+function numberCell(row: Row, aliases: string[], fallback = 0) {
+  const value = getCell(row, aliases)
+  const num = Number(String(value || '').replace(/,/g, ''))
+  return Number.isFinite(num) ? num : fallback
 }
 
-function applyDefaults(table: TableName, row: Row) {
-  const next = { ...row }
+function fullName(row: Row) {
+  const first = getCell(row, ['FirstName', 'First Name', 'Forename', 'FIRST NAME'])
+  const surname = getCell(row, ['Surname', 'Last Name', 'SURNAME'])
+  const normalName = getCell(row, ['Name', 'Employee Name', 'Full Name'])
 
-  const todayKey =
-    table === 'tyre_measurements' ? 'measurement_date' :
-    table === 'employee_tools' ? 'issue_date' :
-    table === 'fabrication_projects' ? 'start_date' :
-    table === 'operations' ? 'event_date' :
-    ['spares_orders', 'tyre_orders', 'battery_orders', 'hose_requests', 'tool_orders', 'fabrication_requests'].includes(table) ? 'request_date' :
-    ''
+  const joined = `${String(first || '').trim()} ${String(surname || '').trim()}`.trim()
 
-  if (todayKey && !next[todayKey]) next[todayKey] = today()
-
-  if (table === 'spares_orders') {
-    next.workflow_stage = next.workflow_stage || 'Requested'
-    next.status = next.status || next.workflow_stage
-  }
-
-  return cleanRow(next)
+  return joined || String(normalName || '').trim()
 }
 
-function mapRow(config: ImportConfig, raw: Row) {
-  const mapped: Row = {}
-  config.fields.forEach((field) => {
-    mapped[field.key] = convertValue(raw, field)
-  })
-
-  return applyDefaults(config.table, polishMappedRow(config.table, raw, mapped))
-}
-
-function hasUsefulData(config: ImportConfig, row: Row) {
-  return config.qualityKeys.some((key) => String(row[key] ?? '').trim() !== '')
-}
-
-function scoreHeaderRow(row: any[]) {
+function headerScore(cells: any[]) {
   const words = [
-    'fleet', 'machine', 'unit', 'equipment', 'asset',
-    'firstname', 'first name', 'surname', 'employee', 'code',
-    'occupation', 'current job title', 'department', 'shift',
-    'dates', 'total', 'leave type',
-    'part no', 'description', 'qty', 'serial', 'status',
-    'requested by', 'supervisor', 'foreman'
+    'fleet',
+    'machine',
+    'unit',
+    'equipment',
+    'firstname',
+    'first name',
+    'surname',
+    'employee',
+    'code',
+    'occupation',
+    'current job title',
+    'department',
+    'shift',
+    'dates',
+    'total',
+    'leave type',
+    'part no',
+    'description',
+    'qty',
+    'serial',
+    'status',
+    'requested by',
+    'supervisor',
+    'foreman'
   ]
 
-  const cells = row.map((cell) => String(cell || '').trim()).filter(Boolean)
   let score = 0
 
   cells.forEach((cell) => {
-    const normal = normalizeKey(cell)
+    const text = normal(cell)
     words.forEach((word) => {
-      if (normal.includes(normalizeKey(word))) score += 1
+      if (text.includes(normal(word))) score += 1
     })
   })
 
-  return score + Math.min(cells.length, 10) * 0.1
+  return score
 }
 
-async function readWorkbook(file: File): Promise<ParsedWorkbook> {
+async function readWorkbook(file: File) {
   const buffer = await file.arrayBuffer()
   const workbook = XLSX.read(buffer, { type: 'array', cellDates: true })
+
   const rows: Row[] = []
-  const headings = new Set<string>()
-  const matrix: ParsedWorkbook['matrix'] = []
+  const allHeadings = new Set<string>()
+  const allCells: any[][] = []
 
   workbook.SheetNames.forEach((sheetName) => {
     const sheet = workbook.Sheets[sheetName]
-    const raw = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: true }) as any[][]
-    if (!raw.length) return
+    const matrix = XLSX.utils.sheet_to_json(sheet, {
+      header: 1,
+      defval: '',
+      raw: true
+    }) as any[][]
 
-    raw.forEach((line, rowIndex) => matrix.push({ sheetName, rowIndex, cells: line }))
+    matrix.forEach((line) => allCells.push(line))
+
+    if (!matrix.length) return
 
     let headerIndex = 0
-    let bestScore = -1
+    let best = -1
 
-    raw.forEach((line, index) => {
-      const score = scoreHeaderRow(line)
-      if (score > bestScore) {
-        bestScore = score
+    matrix.forEach((line, index) => {
+      const score = headerScore(line)
+      if (score > best) {
+        best = score
         headerIndex = index
       }
     })
 
-    const headers = (raw[headerIndex] || []).map((header, index) => {
-      const clean = String(header || '').trim()
-      return clean || `Column ${index + 1}`
+    const headings = (matrix[headerIndex] || []).map((h, i) => {
+      const clean = String(h || '').trim()
+      return clean || `Column ${i + 1}`
     })
 
-    headers.forEach((h) => headings.add(h))
+    headings.forEach((h) => allHeadings.add(h))
 
-    raw.slice(headerIndex + 1).forEach((line, idx) => {
-      const obj: Row = { __sheet_name: sheetName, __row_index: headerIndex + 1 + idx, __cells: line }
+    matrix.slice(headerIndex + 1).forEach((line, offset) => {
+      const obj: Row = {
+        __sheet: sheetName,
+        __row: headerIndex + offset + 2,
+        __cells: line
+      }
+
       let filled = 0
 
-      headers.forEach((header, index) => {
+      headings.forEach((heading, index) => {
         const value = line[index]
         if (value !== undefined && value !== null && String(value).trim() !== '') {
-          obj[header] = value
+          obj[heading] = value
           filled += 1
         }
       })
@@ -818,100 +295,439 @@ async function readWorkbook(file: File): Promise<ParsedWorkbook> {
     })
   })
 
-  return { rows, headings: Array.from(headings), matrix }
+  return {
+    rows,
+    headings: Array.from(allHeadings),
+    allCells
+  }
 }
 
-function extractFleetFallback(parsed: ParsedWorkbook) {
+function fleetFromCells(cells: any[]) {
+  const text = cells.map((c) => String(c || '')).join(' ')
+  const parts = text.split(/[\s,;:/|]+/).map((x) => x.trim()).filter(Boolean)
+
+  const banned = new Set([
+    'FLEET',
+    'MACHINE',
+    'EQUIPMENT',
+    'TYPE',
+    'DESCRIPTION',
+    'DATE',
+    'TOTAL',
+    'STATUS',
+    'DEPARTMENT',
+    'WORKSHOP'
+  ])
+
+  for (const part of parts) {
+    const clean = part.toUpperCase().replace(/[^A-Z0-9-]/g, '')
+    if (!clean) continue
+    if (banned.has(clean)) continue
+    if (/^\d+$/.test(clean)) continue
+    if (/^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}$/.test(clean)) continue
+
+    if (/^[A-Z]{1,6}-?\d{1,6}[A-Z]?$/.test(clean)) {
+      return clean.replace(/-/g, '')
+    }
+  }
+
+  return ''
+}
+
+function inferMachineType(value: any, textValue = '') {
+  const text = `${value} ${textValue}`.toUpperCase()
+
+  if (text.includes('FEL') || text.includes('LOADER')) return 'FEL'
+  if (text.includes('EXC') || text.includes('TEX') || text.includes('EXCAVATOR')) return 'Excavator'
+  if (text.includes('DOZER') || text.includes('DZ')) return 'Dozer'
+  if (text.includes('GRADER')) return 'Grader'
+  if (text.includes('ROLLER')) return 'Roller'
+  if (text.includes('ADT') || text.includes('HOWO') || text.includes('TRUCK') || text.includes('HT')) return 'Truck'
+  if (text.includes('LDV') || text.includes('AFX') || text.includes('AG')) return 'LDV'
+
+  return 'Machine'
+}
+
+function parsePersonnel(row: Row) {
+  const name = fullName(row)
+  const employeeNo = String(getCell(row, ['Code', 'Employee Code', 'Employee No', 'Clock No']) || '').trim()
+  const role = String(getCell(row, ['Occupation', 'Current Job Title', 'Job Title', 'Trade', 'Role']) || 'Workshop Employee').trim()
+  const section = String(getCell(row, ['Department', 'Dept', 'Section']) || 'Workshop').trim()
+
+  if (!name) return null
+  if (name.toLowerCase().includes('workshop department')) return null
+
+  return cleanRow({
+    id: employeeNo || makeSlug(name),
+    employee_no: employeeNo,
+    name,
+    shift: String(getCell(row, ['Shift']) || 'Shift 1').trim(),
+    section,
+    role,
+    staff_group: 'Workshop Staff',
+    phone: String(getCell(row, ['Phone', 'Cell', 'Mobile']) || '').trim(),
+    employment_status: String(getCell(row, ['Status', 'Employment Status']) || 'Active').trim(),
+    leave_balance_days: numberCell(row, ['Leave Balance', 'Leave Days'], 30),
+    leave_taken_days: numberCell(row, ['Leave Taken', 'Days Taken'], 0),
+    notes: String(getCell(row, ['Notes', 'Remarks']) || '').trim()
+  })
+}
+
+function parseLeave(row: Row) {
+  const name = fullName(row)
+  const employeeNo = String(getCell(row, ['Code', 'Employee Code', 'Employee No', 'Clock No']) || '').trim()
+  const role = String(getCell(row, ['Occupation', 'Current Job Title', 'Job Title', 'Trade', 'Role']) || '').trim()
+  const section = String(getCell(row, ['Department', 'Dept', 'Section']) || 'Workshop').trim()
+
+  const datesText = getCell(row, ['DATES', 'Dates', 'Date Range', 'Leave Dates'])
+  const [rangeStart, rangeEnd] = dateRange(datesText)
+
+  const start = dateOnly(getCell(row, ['Start Date', 'Leave Start', 'From'])) || rangeStart
+  const end = dateOnly(getCell(row, ['End Date', 'Leave End', 'To'])) || rangeEnd
+
+  if (!name && !employeeNo) return null
+  if (!start && !end) return null
+
+  const leaveType = String(getCell(row, ['LEAVE TYPE', 'Leave Type', 'Type']) || 'Annual Leave').trim()
+  const days = numberCell(row, ['TOTAL', 'Total', 'Days', 'Leave Days'], daysInclusive(start, end))
+  const id = `${employeeNo || makeSlug(name)}-${start}-${end}-${makeSlug(leaveType)}`
+
+  return cleanRow({
+    id,
+    employee_no: employeeNo,
+    person_name: name,
+    shift: String(getCell(row, ['Shift']) || 'Shift 1').trim(),
+    section,
+    role,
+    leave_type: leaveType,
+    start_date: start,
+    end_date: end,
+    days,
+    reason: String(getCell(row, ['Reason']) || '').trim(),
+    status: String(getCell(row, ['Status']) || 'Approved').trim()
+  })
+}
+
+function parseFleet(row: Row) {
+  const cells = Array.isArray(row.__cells) ? row.__cells : Object.values(row)
+  const cellText = cells.map((c) => String(c || '')).join(' ')
+
+  const fleetNo =
+    String(getCell(row, ['Fleet', 'Fleet No', 'Fleet Number', 'Machine', 'Machine No', 'Unit', 'Equipment', 'Plant No']) || '').trim() ||
+    fleetFromCells(cells)
+
+  if (!fleetNo) return null
+
+  return cleanRow({
+    id: fleetNo,
+    fleet_no: fleetNo,
+    machine_type:
+      String(getCell(row, ['Machine Type', 'Equipment Type', 'Type']) || '').trim() ||
+      inferMachineType(fleetNo, cellText),
+    make_model: String(getCell(row, ['Make Model', 'Make', 'Model', 'Description']) || '').trim(),
+    reg_no: String(getCell(row, ['Reg', 'Registration', 'Reg No']) || '').trim(),
+    department: String(getCell(row, ['Department', 'Dept', 'Section']) || 'Workshop').trim(),
+    location: String(getCell(row, ['Location', 'Site']) || '').trim(),
+    hours: numberCell(row, ['Hours', 'Hrs', 'HM', 'Hour Meter'], 0),
+    mileage: numberCell(row, ['Mileage', 'KM', 'Odometer'], 0),
+    status: String(getCell(row, ['Status', 'State']) || 'Available').trim(),
+    notes: String(getCell(row, ['Notes', 'Remarks']) || '').trim()
+  })
+}
+
+function parseGeneric(table: TableName, row: Row) {
+  const fleetNo = String(getCell(row, ['Fleet', 'Fleet No', 'Machine', 'Unit']) || '').trim()
+  const partNo = String(getCell(row, ['Part No', 'Part Number', 'Stock Code', 'Item No']) || '').trim()
+  const description = String(getCell(row, ['Description', 'Item', 'Name']) || '').trim()
+  const serial = String(getCell(row, ['Serial', 'Serial No', 'Serial Number']) || '').trim()
+  const requestedBy = String(getCell(row, ['Requested By', 'Requester', 'Foreman']) || '').trim()
+
+  const base: Row = {
+    id: uid(),
+    fleet_no: fleetNo,
+    machine_fleet_no: fleetNo,
+    part_no: partNo,
+    description,
+    serial_no: serial,
+    requested_by: requestedBy,
+    qty: numberCell(row, ['Qty', 'Quantity'], 1),
+    stock_qty: numberCell(row, ['Stock Qty', 'Stock', 'Balance', 'Qty'], 0),
+    status: String(getCell(row, ['Status', 'Stage']) || 'Imported').trim(),
+    notes: String(getCell(row, ['Notes', 'Remarks']) || '').trim()
+  }
+
+  if (table === 'spares') {
+    return cleanRow({
+      id: partNo || uid(),
+      part_no: partNo,
+      description,
+      section: String(getCell(row, ['Section', 'Department']) || 'Stores').trim(),
+      machine_type: String(getCell(row, ['Machine Type', 'Type']) || '').trim(),
+      stock_qty: numberCell(row, ['Stock Qty', 'Stock', 'Balance', 'Qty'], 0),
+      min_qty: numberCell(row, ['Min Qty', 'Minimum', 'Reorder Level'], 1),
+      supplier: String(getCell(row, ['Supplier', 'Vendor']) || '').trim(),
+      order_status: String(getCell(row, ['Status', 'Order Status']) || 'In stock').trim(),
+      notes: base.notes
+    })
+  }
+
+  if (table === 'spares_orders') {
+    return cleanRow({
+      id: uid(),
+      request_date: dateOnly(getCell(row, ['Request Date', 'Date'])) || today(),
+      machine_fleet_no: fleetNo,
+      requested_by: requestedBy,
+      part_no: partNo,
+      description,
+      qty: numberCell(row, ['Qty', 'Quantity'], 1),
+      priority: String(getCell(row, ['Priority']) || 'Normal').trim(),
+      workflow_stage: String(getCell(row, ['Stage', 'Workflow Stage', 'Status']) || 'Requested').trim(),
+      status: String(getCell(row, ['Status', 'Stage']) || 'Requested').trim(),
+      eta: dateOnly(getCell(row, ['ETA', 'Expected Date'])),
+      notes: base.notes
+    })
+  }
+
+  if (table === 'services') {
+    return cleanRow({
+      id: uid(),
+      fleet_no: fleetNo,
+      service_type: String(getCell(row, ['Service Type', 'Service', 'Type']) || 'Service').trim(),
+      due_date: dateOnly(getCell(row, ['Due Date', 'Date'])),
+      scheduled_hours: numberCell(row, ['Scheduled Hours', 'Due Hours', 'Hours', 'HM'], 0),
+      completed_date: dateOnly(getCell(row, ['Completed Date', 'Done Date'])),
+      completed_hours: numberCell(row, ['Completed Hours', 'Done Hours'], 0),
+      job_card_no: String(getCell(row, ['Job Card', 'Job Card No']) || '').trim(),
+      supervisor: String(getCell(row, ['Supervisor', 'Foreman']) || '').trim(),
+      technician: String(getCell(row, ['Technician', 'Fitter', 'Mechanic']) || '').trim(),
+      status: String(getCell(row, ['Status']) || 'Due').trim(),
+      notes: base.notes
+    })
+  }
+
+  if (table === 'breakdowns' || table === 'repairs') {
+    return cleanRow({
+      id: uid(),
+      fleet_no: fleetNo,
+      fault: String(getCell(row, ['Fault', 'Problem', 'Breakdown', 'Defect', 'Description']) || '').trim(),
+      category: String(getCell(row, ['Category', 'Section']) || 'Mechanical').trim(),
+      assigned_to: String(getCell(row, ['Assigned To', 'Fitter', 'Mechanic', 'Technician']) || '').trim(),
+      reported_by: String(getCell(row, ['Reported By', 'Operator']) || '').trim(),
+      job_card_no: String(getCell(row, ['Job Card', 'Job Card No']) || '').trim(),
+      status: String(getCell(row, ['Status']) || 'Open').trim(),
+      notes: base.notes
+    })
+  }
+
+  if (table === 'tyres') {
+    return cleanRow({
+      id: serial || uid(),
+      serial_no: serial,
+      fleet_no: fleetNo,
+      make: String(getCell(row, ['Make', 'Brand']) || '').trim(),
+      company_no: String(getCell(row, ['Company No', 'Company Number']) || '').trim(),
+      fitted_date: dateOnly(getCell(row, ['Fitted Date', 'Date Fitted', 'Fitment Date'])),
+      fitted_by: String(getCell(row, ['Fitted By']) || '').trim(),
+      position: String(getCell(row, ['Position']) || '').trim(),
+      size: String(getCell(row, ['Size']) || '').trim(),
+      status: String(getCell(row, ['Status']) || 'Fitted').trim(),
+      notes: base.notes
+    })
+  }
+
+  if (table === 'batteries') {
+    return cleanRow({
+      id: serial || uid(),
+      serial_no: serial,
+      fleet_no: fleetNo,
+      make: String(getCell(row, ['Make', 'Brand']) || '').trim(),
+      volts: String(getCell(row, ['Volts', 'Voltage']) || '').trim(),
+      fitment_date: dateOnly(getCell(row, ['Fitment Date', 'Date Fitted'])),
+      fitted_by: String(getCell(row, ['Fitted By']) || '').trim(),
+      status: String(getCell(row, ['Status']) || 'Fitted').trim(),
+      notes: base.notes
+    })
+  }
+
+  if (table === 'tools') {
+    return cleanRow({
+      id: serial || description || uid(),
+      tool_name: description || String(getCell(row, ['Tool', 'Tool Name']) || '').trim(),
+      category: String(getCell(row, ['Category']) || 'Hand Tools').trim(),
+      brand: String(getCell(row, ['Brand', 'Make']) || '').trim(),
+      serial_no: serial,
+      stock_qty: numberCell(row, ['Stock Qty', 'Qty', 'Quantity'], 0),
+      condition: String(getCell(row, ['Condition']) || 'Good').trim(),
+      status: String(getCell(row, ['Status']) || 'In stock').trim(),
+      notes: base.notes
+    })
+  }
+
+  const hasSomething = fleetNo || partNo || description || serial || requestedBy
+  return hasSomething ? cleanRow(base) : null
+}
+
+function parseRows(table: TableName, rawRows: Row[], allCells: any[][]) {
+  let rows: Row[] = []
+
+  if (table === 'personnel') {
+    rows = rawRows.map(parsePersonnel).filter(Boolean) as Row[]
+  } else if (table === 'leave_records') {
+    rows = rawRows.map(parseLeave).filter(Boolean) as Row[]
+  } else if (table === 'fleet_machines') {
+    rows = rawRows.map(parseFleet).filter(Boolean) as Row[]
+
+    if (!rows.length) {
+      const map = new Map<string, Row>()
+
+      allCells.forEach((line) => {
+        const fleetNo = fleetFromCells(line)
+        if (!fleetNo) return
+
+        const text = line.map((x) => String(x || '')).join(' ')
+
+        map.set(fleetNo, {
+          id: fleetNo,
+          fleet_no: fleetNo,
+          machine_type: inferMachineType(fleetNo, text),
+          department: 'Workshop',
+          status: 'Available',
+          notes: text.slice(0, 160)
+        })
+      })
+
+      rows = Array.from(map.values())
+    }
+  } else {
+    rows = rawRows.map((row) => parseGeneric(table, row)).filter(Boolean) as Row[]
+  }
+
   const map = new Map<string, Row>()
 
-  parsed.matrix.forEach((line) => {
-    const fleetNo = fleetCandidateFromCells(line.cells)
-    if (!fleetNo) return
+  rows.forEach((row) => {
+    const key =
+      table === 'personnel'
+        ? String(row.employee_no || row.name || row.id)
+        : table === 'fleet_machines'
+          ? String(row.fleet_no || row.id)
+          : String(row.id || uid())
 
-    const rowText = line.cells.map((x) => String(x || '')).join(' ')
-    map.set(fleetNo, {
-      id: fleetNo,
-      fleet_no: fleetNo,
-      machine_type: inferMachineType(fleetNo, rowText),
-      make_model: '',
-      department: 'Workshop',
-      location: line.sheetName,
-      hours: 0,
-      mileage: 0,
-      status: 'Available',
-      notes: rowText.slice(0, 180)
+    if (!key.trim()) return
+
+    map.set(key, {
+      ...row,
+      id: key
     })
   })
 
   return Array.from(map.values())
 }
 
-function dedupeRows(config: ImportConfig, rows: Row[]) {
-  const map = new Map<string, Row>()
+function saveToLocalSnapshot(table: TableName, rows: Row[]) {
+  try {
+    const raw = localStorage.getItem('turbo-workshop-snapshot')
+    const parsed = raw ? JSON.parse(raw) : { data: {} }
+    const data = parsed.data || {}
 
-  rows.forEach((row) => {
-    let key = ''
+    const existing: Row[] = Array.isArray(data[table]) ? data[table] : []
+    const map = new Map<string, Row>()
 
-    if (config.table === 'personnel') key = String(row.employee_no || row.name || '').trim()
-    if (config.table === 'fleet_machines') key = String(row.fleet_no || '').trim()
-    if (!key) key = String(row.id || uid()).trim()
+    existing.forEach((row) => {
+      const key = String(row.id || row.fleet_no || row.employee_no || JSON.stringify(row))
+      map.set(key, row)
+    })
 
-    map.set(key, { ...row, id: key })
-  })
+    rows.forEach((row) => {
+      const key = String(row.id || row.fleet_no || row.employee_no || uid())
+      map.set(key, { ...map.get(key), ...row })
+    })
 
-  return Array.from(map.values())
+    data[table] = Array.from(map.values())
+
+    localStorage.setItem(
+      'turbo-workshop-snapshot',
+      JSON.stringify({
+        updatedAt: new Date().toISOString(),
+        data
+      })
+    )
+  } catch {
+    // local backup failure must not stop import
+  }
+}
+
+function addToOfflineQueue(table: TableName, rows: Row[]) {
+  try {
+    const raw = localStorage.getItem('turbo-workshop-offline-queue')
+    const queue = raw ? JSON.parse(raw) : []
+
+    rows.forEach((row) => {
+      queue.push({
+        id: uid(),
+        table,
+        type: 'upsert',
+        payload: row,
+        createdAt: new Date().toISOString()
+      })
+    })
+
+    localStorage.setItem('turbo-workshop-offline-queue', JSON.stringify(queue))
+  } catch {
+    // queue failure must not stop import
+  }
 }
 
 function Badge({ value }: { value: string }) {
-  const v = String(value || 'Ready')
-  const low = v.toLowerCase()
-  const cls = low.includes('failed') || low.includes('error') ? 'danger' : low.includes('uploaded') || low.includes('connected') ? 'good' : 'neutral'
-  return <span className={`badge ${cls}`}>{v}</span>
+  const text = String(value || '')
+  const low = text.toLowerCase()
+  const cls = low.includes('fail') || low.includes('error') ? 'danger' : low.includes('uploaded') || low.includes('connected') ? 'good' : 'neutral'
+  return <span className={`badge ${cls}`}>{text}</span>
 }
 
 export default function ImporterPage() {
-  const [selected, setSelected] = useState<TableName>('fleet_machines')
+  const [selected, setSelected] = useState<TableName>('personnel')
+  const [search, setSearch] = useState('')
   const [status, setStatus] = useState('Ready')
   const [busy, setBusy] = useState(false)
-  const [previewRows, setPreviewRows] = useState<Row[]>([])
-  const [rawHeadings, setRawHeadings] = useState<string[]>([])
   const [fileName, setFileName] = useState('')
-  const [search, setSearch] = useState('')
+  const [headings, setHeadings] = useState<string[]>([])
+  const [preview, setPreview] = useState<Row[]>([])
 
-  const selectedConfig = IMPORTS.find((item) => item.table === selected) || IMPORTS[0]
+  const selectedRegister = REGISTERS.find((r) => r.table === selected) || REGISTERS[0]
 
-  const filteredImports = useMemo(() => {
+  const filtered = useMemo(() => {
     const q = search.toLowerCase()
-    return IMPORTS.filter((item) => `${item.label} ${item.description} ${item.table}`.toLowerCase().includes(q))
+    return REGISTERS.filter((r) => `${r.label} ${r.description} ${r.table}`.toLowerCase().includes(q))
   }, [search])
 
-  function buildRows(config: ImportConfig, parsed: ParsedWorkbook) {
-    let mapped = parsed.rows.map((row) => mapRow(config, row)).filter((row) => hasUsefulData(config, row))
+  async function saveRows(table: TableName, rows: Row[]) {
+    saveToLocalSnapshot(table, rows)
 
-    if (!mapped.length && config.table === 'fleet_machines') {
-      mapped = extractFleetFallback(parsed)
+    if (!supabase || !isSupabaseConfigured) {
+      addToOfflineQueue(table, rows)
+      setStatus(`Uploaded ${rows.length} records locally. Supabase is not configured.`)
+      return
     }
-
-    return dedupeRows(config, mapped)
-  }
-
-  async function insertRows(config: ImportConfig, rows: Row[]) {
-    if (!supabase || !isSupabaseConfigured) throw new Error('Supabase is not configured.')
 
     let uploaded = 0
-    const chunkSize = 50
 
-    for (let i = 0; i < rows.length; i += chunkSize) {
-      const chunk = rows.slice(i, i + chunkSize)
+    for (let i = 0; i < rows.length; i += 50) {
+      const chunk = rows.slice(i, i + 50)
 
-      const { error } = await supabase.from(config.table as any).upsert(chunk, { onConflict: 'id' })
-      if (error) throw error
+      const { error } = await supabase
+        .from(table as any)
+        .upsert(chunk, { onConflict: 'id' })
+
+      if (error) {
+        addToOfflineQueue(table, chunk)
+        throw error
+      }
 
       uploaded += chunk.length
-      setStatus(`Uploaded ${uploaded}/${rows.length} records to ${config.label}...`)
+      setStatus(`Uploaded ${uploaded}/${rows.length} records to ${selectedRegister.label}...`)
     }
 
-    setStatus(`Uploaded ${rows.length} records to ${config.label}.`)
+    setStatus(`Uploaded ${rows.length} records to ${selectedRegister.label}.`)
   }
 
   async function handleUpload(file?: File) {
@@ -919,38 +735,24 @@ export default function ImporterPage() {
 
     setBusy(true)
     setFileName(file.name)
-    setPreviewRows([])
-    setRawHeadings([])
+    setHeadings([])
+    setPreview([])
 
     try {
       setStatus(`Reading ${file.name}...`)
 
       const parsed = await readWorkbook(file)
-      setRawHeadings(parsed.headings)
+      setHeadings(parsed.headings)
 
-      let activeConfig = selectedConfig
-      let rows = buildRows(activeConfig, parsed)
-
-      if (!rows.length) {
-        for (const config of IMPORTS) {
-          const attempt = buildRows(config, parsed)
-          if (attempt.length) {
-            activeConfig = config
-            rows = attempt
-            setSelected(config.table)
-            break
-          }
-        }
-      }
-
-      setPreviewRows(rows.slice(0, 12))
+      const rows = parseRows(selected, parsed.rows, parsed.allCells)
+      setPreview(rows.slice(0, 12))
 
       if (!rows.length) {
-        setStatus('No usable rows found. The file was read, but no fleet numbers, employee names, leave records, parts, tyres, batteries, hoses or tools were detected.')
+        setStatus(`No usable rows found for ${selectedRegister.label}. Choose the correct register on the left.`)
         return
       }
 
-      await insertRows(activeConfig, rows)
+      await saveRows(selected, rows)
     } catch (err: any) {
       setStatus(`Upload failed: ${err?.message || 'Unknown error'}`)
     } finally {
@@ -1018,7 +820,12 @@ export default function ImporterPage() {
 
         h1, h2, h3 { margin: 0; }
         p { color: var(--muted); line-height: 1.4; }
-        a { color: var(--blue); font-weight: 900; text-decoration: none; }
+
+        a {
+          color: var(--blue);
+          font-weight: 900;
+          text-decoration: none;
+        }
 
         .grid {
           display: grid;
@@ -1074,8 +881,14 @@ export default function ImporterPage() {
           background: rgba(255,122,26,.16);
         }
 
-        .module-btn b { display: block; margin-bottom: 4px; }
-        .module-btn small { color: var(--muted); }
+        .module-btn b {
+          display: block;
+          margin-bottom: 4px;
+        }
+
+        .module-btn small {
+          color: var(--muted);
+        }
 
         .top-card {
           display: grid;
@@ -1091,14 +904,8 @@ export default function ImporterPage() {
           background: rgba(255,255,255,.06);
         }
 
-        .button-row {
-          display: flex;
-          gap: 10px;
-          flex-wrap: wrap;
-          margin-top: 14px;
-        }
-
         .btn {
+          display: inline-flex;
           border: 0;
           border-radius: 14px;
           padding: 12px 16px;
@@ -1151,7 +958,6 @@ export default function ImporterPage() {
 
         .meta {
           display: grid;
-          grid-template-columns: 1fr;
           gap: 12px;
         }
 
@@ -1177,11 +983,11 @@ export default function ImporterPage() {
           word-break: break-word;
         }
 
-        .headings {
+        .chips {
           display: flex;
           gap: 8px;
           flex-wrap: wrap;
-          max-height: 130px;
+          max-height: 140px;
           overflow: auto;
           margin-top: 10px;
         }
@@ -1239,13 +1045,27 @@ export default function ImporterPage() {
           margin-top: 18px;
         }
 
-        .help-grid .card { padding: 14px; }
-        .help-grid b { color: var(--blue); }
+        .help-grid .card {
+          padding: 14px;
+        }
+
+        .help-grid b {
+          color: var(--blue);
+        }
 
         @media (max-width: 980px) {
-          .grid, .top-card, .help-grid { grid-template-columns: 1fr; }
-          .import-shell { padding: 12px; }
-          .hero { align-items: flex-start; flex-direction: column; }
+          .grid, .top-card, .help-grid {
+            grid-template-columns: 1fr;
+          }
+
+          .import-shell {
+            padding: 12px;
+          }
+
+          .hero {
+            align-items: flex-start;
+            flex-direction: column;
+          }
         }
       `}</style>
 
@@ -1254,11 +1074,11 @@ export default function ImporterPage() {
           <div className="mark">TE</div>
           <div>
             <h1>Turbo Energy Smart Excel Importer</h1>
-            <p>Upload Excel/CSV for personnel, leave, fleet, spares, tyres, batteries, hoses, tools and workshop sections.</p>
+            <p>Fixed importer for personnel, leave, fleet, spares, tyres, batteries, hoses, tools and workshop sections.</p>
           </div>
         </div>
 
-        <div className="button-row">
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
           <a className="btn secondary" href="/">Back to app</a>
           <Badge value={isSupabaseConfigured ? 'Supabase connected' : 'Supabase not configured'} />
         </div>
@@ -1267,7 +1087,7 @@ export default function ImporterPage() {
       <section className="grid">
         <aside className="card">
           <h2>Choose register</h2>
-          <p>Select what your Excel file contains, then upload the file.</p>
+          <p>Select what the Excel file is for, then upload.</p>
 
           <input
             className="module-search"
@@ -1277,16 +1097,17 @@ export default function ImporterPage() {
           />
 
           <div className="module-list">
-            {filteredImports.map((item) => (
+            {filtered.map((item) => (
               <button
+                type="button"
                 key={item.table}
                 className={`module-btn ${selected === item.table ? 'active' : ''}`}
                 onClick={() => {
                   setSelected(item.table)
-                  setPreviewRows([])
-                  setRawHeadings([])
-                  setFileName('')
                   setStatus('Ready')
+                  setFileName('')
+                  setHeadings([])
+                  setPreview([])
                 }}
               >
                 <b>{item.label}</b>
@@ -1299,8 +1120,8 @@ export default function ImporterPage() {
         <section>
           <div className="card top-card">
             <div>
-              <h2>{selectedConfig.label}</h2>
-              <p>{selectedConfig.description}</p>
+              <h2>{selectedRegister.label}</h2>
+              <p>{selectedRegister.description}</p>
 
               <div className="upload-box">
                 <input
@@ -1314,7 +1135,8 @@ export default function ImporterPage() {
                 />
 
                 <p>
-                  This importer now scans the whole sheet. For machine lists it can detect fleet numbers even when there are no proper headings.
+                  Personnel reads FIRST NAME, SURNAME, CURRENT JOB TITLE and Department.
+                  Leave reads Code, FirstName, Surname, Occupation, Department, DATES, TOTAL and LEAVE TYPE.
                 </p>
               </div>
 
@@ -1322,62 +1144,67 @@ export default function ImporterPage() {
             </div>
 
             <div className="meta">
-              <div><span>Selected</span><b>{selectedConfig.label}</b></div>
-              <div><span>Database table</span><b>{selectedConfig.table}</b></div>
-              <div><span>Save mode</span><b>Upsert / update</b></div>
+              <div><span>Selected</span><b>{selectedRegister.label}</b></div>
+              <div><span>Database table</span><b>{selectedRegister.table}</b></div>
               <div><span>File</span><b>{fileName || 'None'}</b></div>
+              <div><span>Save mode</span><b>Upsert / update</b></div>
             </div>
           </div>
 
           <div className="help-grid">
             <div className="card">
-              <b>Fleet files</b>
-              <p>Choose Fleet Register. It will scan every row for fleet numbers.</p>
+              <b>Personnel sample</b>
+              <p>Choose Personnel Register, then upload Workshop attendance.xlsx.</p>
             </div>
 
             <div className="card">
-              <b>Personnel files</b>
-              <p>Choose Personnel Register. It reads Code, FirstName, Surname, Occupation and Department.</p>
+              <b>Leave sample</b>
+              <p>Choose Leave / Off Schedule, then upload LEAVE SUMMARY.xlsx.</p>
             </div>
 
             <div className="card">
-              <b>Leave files</b>
-              <p>Choose Leave / Off Schedule. It converts 23.04.2026 into 2026-04-23 before saving.</p>
+              <b>After upload</b>
+              <p>When it says Uploaded, go back to the app and press CTRL + F5.</p>
             </div>
           </div>
 
           <div className="card" style={{ marginTop: 18 }}>
-            <h3>Headings found in last file</h3>
-            {rawHeadings.length ? (
-              <div className="headings">
-                {rawHeadings.map((h) => <span className="chip" key={h}>{h}</span>)}
+            <h3>Headings found</h3>
+
+            {headings.length ? (
+              <div className="chips">
+                {headings.map((h) => <span className="chip" key={h}>{h}</span>)}
               </div>
             ) : (
-              <div className="empty">No headings found. The importer will still scan the whole file for usable data.</div>
+              <div className="empty">No file loaded yet.</div>
             )}
           </div>
 
           <div className="card" style={{ marginTop: 18 }}>
-            <h3>Preview of mapped rows</h3>
-            {previewRows.length ? (
+            <h3>Preview before save</h3>
+
+            {preview.length ? (
               <div className="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      {Object.keys(previewRows[0]).slice(0, 12).map((key) => <th key={key}>{key}</th>)}
+                      {Object.keys(preview[0]).slice(0, 12).map((key) => <th key={key}>{key}</th>)}
                     </tr>
                   </thead>
+
                   <tbody>
-                    {previewRows.map((row) => (
+                    {preview.map((row) => (
                       <tr key={row.id || JSON.stringify(row)}>
-                        {Object.keys(previewRows[0]).slice(0, 12).map((key) => <td key={key}>{String(row[key] ?? '')}</td>)}
+                        {Object.keys(preview[0]).slice(0, 12).map((key) => (
+                          <td key={key}>{String(row[key] ?? '')}</td>
+                        ))}
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <div className="empty">After upload, the first mapped rows will show here.</div>
+              <div className="empty">After upload, mapped records will show here.</div>
             )}
           </div>
         </section>
